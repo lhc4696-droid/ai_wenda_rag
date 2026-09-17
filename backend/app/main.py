@@ -1,0 +1,96 @@
+from contextlib import asynccontextmanager
+
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from app.auth.routes import get_app_settings, require_trusted_origin, require_user, router as auth_router
+from app.auth.store import AuthStore
+from app.config import Settings, get_settings
+from app.schemas import ChatRequest, ChatResponse, ErrorResponse, HealthResponse
+from app.services.llm import DashScopeLLM, LLMError, LLMProvider
+from app.services.email import SMTPMailer
+from app.auth.schemas import UserResponse
+from app.chat.service import ChatService
+from app.chat.store import ModelCallStore, ChatLimit
+from app.observability import request_context
+from app.schemas import ChatUsageResponse
+from app.conversations.routes import create_router as conversation_router
+from app.conversations.store import ConversationStore, HistoryError
+from app.conversations.service import ConversationService
+
+
+def get_llm_provider(settings: Settings = Depends(get_app_settings)) -> LLMProvider:
+    return DashScopeLLM(settings)
+
+
+def create_app(config: Settings | None = None) -> FastAPI:
+    settings = config or get_settings()
+    store = AuthStore(settings.auth_db_path)
+    model_calls = ModelCallStore(store)
+    chat_service = ChatService(model_calls, settings)
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI):
+        store.initialize()
+        yield
+
+    application = FastAPI(title="知言 AI API", description="邮箱注册、个人账号设置、持久化聊天历史与限额聊天。登录使用 HttpOnly Cookie。", version="0.5.0", lifespan=lifespan)
+    application.state.settings = settings
+    application.state.auth_store = store
+    application.state.mailer = SMTPMailer(settings)
+    application.state.model_calls = model_calls
+    application.state.conversations = ConversationStore(store)
+    application.state.conversation_service = ConversationService(application.state.conversations, chat_service, settings)
+    application.add_middleware(
+        CORSMiddleware, allow_origins=list(settings.cors_origins), allow_credentials=True,
+        allow_methods=["GET", "POST", "PATCH", "DELETE"], allow_headers=["Content-Type"],
+        expose_headers=["X-Request-ID", "X-Error-Code", "Retry-After"],
+    )
+    application.include_router(auth_router)
+    application.include_router(conversation_router(get_llm_provider))
+
+    @application.exception_handler(HistoryError)
+    async def history_error(request: Request, exc: HistoryError):
+        headers = {"X-Error-Code": exc.code, "Cache-Control": "no-store"}
+        if exc.retry_after:
+            headers["Retry-After"] = str(exc.retry_after)
+        return JSONResponse(status_code=exc.status, content={"detail": str(exc)}, headers=headers)
+
+    @application.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, exc: RequestValidationError):
+        # Pydantic 原始错误包含 input；注册/登录失败时不能将密码回显给客户端。
+        errors = [{key: error[key] for key in ("loc", "msg", "type")} for error in exc.errors()]
+        return JSONResponse(status_code=422, content={"detail": errors}, headers={"Cache-Control": "no-store"})
+
+    application.middleware("http")(request_context)
+
+    @application.get("/api/health", response_model=HealthResponse)
+    async def health() -> HealthResponse:
+        return HealthResponse()
+
+    @application.post(
+        "/api/chat", response_model=ChatResponse, deprecated=True, summary="兼容旧客户端的临时聊天，不保存历史",
+        dependencies=[Depends(require_trusted_origin)],
+        responses={401: {"model": ErrorResponse}, 429: {"model": ErrorResponse}, 503: {"model": ErrorResponse}, 504: {"model": ErrorResponse}},
+    )
+    async def chat(request: ChatRequest, http_request: Request, user: UserResponse = Depends(require_user), provider: LLMProvider = Depends(get_llm_provider)) -> ChatResponse:
+        try:
+            return await chat_service.answer(request.messages, user.id, http_request.state.request_id, provider, http_request.is_disconnected)
+        except ChatLimit as exc:
+            raise HTTPException(429, str(exc), headers={"Retry-After": str(exc.retry_after), "X-Error-Code": exc.code}) from None
+        except LLMError as exc:
+            headers = {"X-Error-Code": exc.code}
+            if exc.retry_after:
+                headers["Retry-After"] = str(exc.retry_after)
+            raise HTTPException(exc.status_code, str(exc), headers=headers) from None
+
+    @application.get("/api/chat/usage", response_model=ChatUsageResponse, dependencies=[Depends(require_trusted_origin)], summary="当前账号今日调用统计，不包含聊天正文")
+    def chat_usage(user: UserResponse = Depends(require_user)):
+        return model_calls.usage(user.id, settings)
+
+    return application
+
+
+app = create_app()

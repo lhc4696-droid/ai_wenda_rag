@@ -1,0 +1,5 @@
+后端启动
+根目录启动powershell
+再输入 .\venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --app-dir backend
+
+前端：pnpm.cmd dev
