@@ -9,7 +9,7 @@ from app.chat.service import bounded_context
 from app.chat.store import ChatLimit
 from app.main import get_llm_provider
 from app.schemas import ChatMessage
-from app.services.llm import LLMError, LLMResult
+from app.integrations.llm import LLMError, LLMResult
 from tests.fakes import register_user
 
 

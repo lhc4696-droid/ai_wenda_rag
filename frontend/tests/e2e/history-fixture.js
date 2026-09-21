@@ -4,7 +4,19 @@ import { randomUUID } from 'node:crypto'
 export async function mockHistory(
   page,
   generate = (route) => route.fulfill({ json: { content: '模拟回答', model: 'test' } }),
+  attachments = new Map(),
 ) {
+  await page.route('**/api/attachments/capabilities', (route) =>
+    route.fulfill({
+      json: {
+        extensions: ['.jpg', '.jpeg', '.png', '.webp', '.txt', '.md', '.pdf', '.docx'],
+        max_files: 3,
+        max_bytes: 10485760,
+        images_enabled: true,
+        vision_model: 'test-vision',
+      },
+    }),
+  )
   const conversations = new Map()
   const messages = new Map()
   let clock = 1800000000
@@ -87,6 +99,7 @@ export async function mockHistory(
         client_message_id: clientId,
         role: 'user',
         content: body.content,
+        attachments: (body.attachment_ids || []).map((id) => attachments.get(id)).filter(Boolean),
         sequence: ++conversation.last_sequence,
         status: 'pending',
         created_at: ++clock,

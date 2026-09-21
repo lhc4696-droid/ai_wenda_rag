@@ -1,4 +1,4 @@
-from app.services.email import EmailUnavailable
+from app.integrations.email import EmailUnavailable
 
 
 class FakeMailer:

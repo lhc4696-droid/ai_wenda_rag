@@ -47,6 +47,10 @@ pnpm dev
 
 ## 功能与边界
 
+- 输入框旁的附件按钮支持 TXT、Markdown、文字 PDF、DOCX 和静态图片；每条最多 3 个、每个默认 10 MiB。上传并解析就绪后附一句问题发送，附件随历史保留；图片可放大，文档可下载。
+- 图片上传需后端配置 QWEN_VISION_MODEL；留空时只开放文档，页面提示原因。没有新增前端依赖；说明见 [聊天附件实现与验收](../docs/聊天附件实现与验收.md)。
+- 新增组件 AttachmentPicker/AttachmentCard/AttachmentPreview；api/attachments.js 使用 FormData 上传，发送聊天时只提交 attachment_ids，不提交文件路径或 Base64。
+
 - 后端保存会话与消息、读取上下文；刷新恢复当前会话，新建不删除旧会话。列表每页 20 场、消息每页 50 条，支持加载更多。
 - Enter 发送，Shift+Enter 换行；中文输入法选词时不会发送。
 - 支持 Markdown、代码块、复制回答和手机布局；模型输出的 HTML 不执行。

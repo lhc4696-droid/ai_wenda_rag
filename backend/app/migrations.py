@@ -6,8 +6,8 @@ import time
 
 
 SQL_DIR = Path(__file__).resolve().parents[1] / "sql"
-MIGRATIONS = ((2, "002_model_calls.sql"), (3, "003_conversation_history.sql"))
-CURRENT_VERSION = 3
+MIGRATIONS = ((2, "002_model_calls.sql"), (3, "003_conversation_history.sql"), (4, "004_attachments.sql"))
+CURRENT_VERSION = 4
 
 
 def execute_statements(connection: sqlite3.Connection, source: str):

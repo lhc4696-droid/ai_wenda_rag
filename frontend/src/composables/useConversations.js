@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { historyApi } from '../api/conversations.js'
+import { attachmentApi } from '../api/attachments.js'
 
 export const MAX_MESSAGE_LENGTH = 20_000
 
@@ -11,11 +12,17 @@ function displayMessage(message) {
   return { ...message, notice: notes.join(' ') }
 }
 
-export function useConversations(api = historyApi) {
+export function useConversations(api = historyApi, filesApi = attachmentApi) {
   const conversations = ref([])
   const current = ref(null)
   const messages = ref([])
   const draft = ref('')
+  const draftAttachments = ref([])
+  const attachmentError = ref('')
+  const attachmentCapabilities = ref(null)
+  const attachmentBusy = computed(() =>
+    draftAttachments.value.some((item) => item.status === 'uploading'),
+  )
   const error = ref('')
   const notice = ref('')
   const loadError = ref('')
@@ -48,6 +55,10 @@ export function useConversations(api = historyApi) {
       !error.value &&
       !retrySeconds.value,
   )
+  // 附件须全部上传并解析成功；不把仅传输完成误认为可供模型使用。
+  const canSendWithAttachments = computed(
+    () => canSend.value && draftAttachments.value.every((item) => item.status === 'ready'),
+  )
   let view = 0
   let alive = true
   let listRevision = 0
@@ -57,6 +68,86 @@ export function useConversations(api = historyApi) {
   let pollTimer, cooldownTimer
   const mutations = new Set()
   const deleted = new Set()
+  const uploads = new Map()
+  const capabilityController = new AbortController()
+
+  async function loadCapabilities() {
+    try {
+      const value = await filesApi.capabilities(capabilityController.signal)
+      if (alive) attachmentCapabilities.value = value
+    } catch (cause) {
+      if (alive) attachmentError.value = '暂时无法读取附件能力，可刷新页面重试；文字聊天不受影响。'
+    }
+  }
+
+  async function addFiles(files) {
+    if (
+      !attachmentCapabilities.value ||
+      isLoading.value ||
+      opening.value ||
+      loadError.value ||
+      error.value
+    )
+      return
+    attachmentError.value = ''
+    const epoch = view
+    for (const file of files) {
+      if (epoch !== view || !alive) break
+      if (draftAttachments.value.length >= 3) {
+        attachmentError.value = '每条消息最多添加 3 个附件。'
+        break
+      }
+      const extension = '.' + file.name.split('.').at(-1).toLowerCase()
+      const kind = ['.jpg', '.jpeg', '.png', '.webp'].includes(extension) ? 'image' : 'document'
+      if (
+        !attachmentCapabilities.value.extensions.includes(extension) ||
+        !file.size ||
+        file.size > attachmentCapabilities.value.max_bytes
+      ) {
+        attachmentError.value = '文件类型不支持、为空或超过大小限制。'
+        continue
+      }
+      if (kind === 'image' && !attachmentCapabilities.value.images_enabled) {
+        attachmentError.value = '图片功能尚未启用，请先在后端配置 QWEN_VISION_MODEL。'
+        continue
+      }
+      const localId = crypto.randomUUID()
+      const controller = new AbortController()
+      uploads.set(localId, controller)
+      draftAttachments.value.push({
+        localId,
+        filename: file.name,
+        kind,
+        size: file.size,
+        status: 'uploading',
+      })
+      try {
+        const item = await filesApi.upload(file, controller.signal)
+        const index = draftAttachments.value.findIndex((a) => a.localId === localId)
+        if (!alive || epoch !== view || index < 0) {
+          filesApi.remove(item.id).catch(() => {})
+          continue
+        }
+        draftAttachments.value[index] = { ...item, localId }
+      } catch (cause) {
+        const item = draftAttachments.value.find((a) => a.localId === localId)
+        if (epoch === view && alive && item) {
+          item.status = 'failed'
+          item.error_message = cause.message || '上传失败，请移除后重试。'
+        }
+      } finally {
+        uploads.delete(localId)
+      }
+    }
+  }
+
+  function removeAttachment(item) {
+    if (submitting.value) return
+    uploads.get(item.localId)?.abort()
+    draftAttachments.value = draftAttachments.value.filter((a) => a !== item)
+    // 已绑定的附件只从草稿移除，原消息仍保留；后端会拒绝删除已绑定附件。
+    if (item.id) filesApi.remove(item.id).catch(() => {})
+  }
 
   function updateUrl(id) {
     if (typeof window === 'undefined') return
@@ -119,6 +210,11 @@ export function useConversations(api = historyApi) {
     olderController?.abort()
     submitting.value = opening.value = refreshing.value = loadingOlder.value = false
     lastSubmission = null
+    for (const controller of uploads.values()) controller.abort()
+    uploads.clear()
+    for (const item of draftAttachments.value) if (item.id) filesApi.remove(item.id).catch(() => {})
+    draftAttachments.value = []
+    attachmentError.value = ''
     loadError.value = error.value = notice.value = ''
     messages.value = []
     draft.value = ''
@@ -145,7 +241,10 @@ export function useConversations(api = historyApi) {
       )
       if (!existing) {
         draft.value = lastSubmission.content
-        notice.value = '上次问题尚未保存，已放回输入框。请确认后重新发送。'
+        draftAttachments.value = lastSubmission.attachments || []
+        notice.value = [notice.value, '上次问题尚未保存，已放回输入框。请确认后重新发送。']
+          .filter(Boolean)
+          .join(' ')
       } else if (existing.status === 'completed') {
         notice.value = '已从历史记录恢复本次回答。'
       } else if (existing.status === 'pending') {
@@ -221,6 +320,7 @@ export function useConversations(api = historyApi) {
   }
 
   async function initialize() {
+    loadCapabilities()
     const epoch = view
     opening.value = true
     await loadList()
@@ -278,7 +378,10 @@ export function useConversations(api = historyApi) {
         updateUrl(conversation.id)
         upsert(conversation)
       }
-      lastSubmission = data
+      lastSubmission = {
+        ...data,
+        attachments: isRetry ? tail.value?.attachments || [] : [...draftAttachments.value],
+      }
       if (!isRetry) {
         messages.value.push({
           id: data.client_message_id,
@@ -288,8 +391,10 @@ export function useConversations(api = historyApi) {
           content: data.content,
           status: 'pending',
           local: true,
+          attachments: [...draftAttachments.value],
         })
         draft.value = ''
+        draftAttachments.value = []
       } else if (tail.value) tail.value.status = 'pending'
       const result = await api.send(
         current.value.id,
@@ -336,11 +441,14 @@ export function useConversations(api = historyApi) {
   }
 
   async function send() {
-    if (!canSend.value) return
+    if (!canSendWithAttachments.value) return
     await submit({
       content: draft.value.trim(),
       client_message_id: crypto.randomUUID(),
       expected_last_sequence: current.value?.last_sequence || 0,
+      ...(draftAttachments.value.length
+        ? { attachment_ids: draftAttachments.value.map((item) => item.id) }
+        : {}),
     })
   }
 
@@ -359,6 +467,9 @@ export function useConversations(api = historyApi) {
         content: tail.value.content,
         client_message_id: tail.value.client_message_id,
         expected_last_sequence: tail.value.sequence - 1,
+        ...(tail.value.attachments?.length
+          ? { attachment_ids: tail.value.attachments.map((item) => item.id) }
+          : {}),
       },
       true,
     )
@@ -367,6 +478,7 @@ export function useConversations(api = historyApi) {
   function editFailed() {
     if (isLoading.value || tail.value?.status !== 'failed' || loadError.value) return
     draft.value = tail.value.content
+    draftAttachments.value = (tail.value.attachments || []).map((item) => ({ ...item }))
     error.value = ''
     notice.value = '原问题保留在历史中，修改后的问题会作为新消息发送。'
   }
@@ -401,6 +513,7 @@ export function useConversations(api = historyApi) {
     alive = false
     leaveView()
     listController?.abort()
+    capabilityController.abort()
     for (const controller of mutations) controller.abort()
     clearInterval(cooldownTimer)
     updateUrl(null)
@@ -424,7 +537,13 @@ export function useConversations(api = historyApi) {
     model,
     isLoading,
     submitting,
-    canSend,
+    canSend: canSendWithAttachments,
+    draftAttachments,
+    attachmentCapabilities,
+    attachmentError,
+    attachmentBusy,
+    addFiles,
+    removeAttachment,
     retrySeconds,
     initialize,
     loadList,

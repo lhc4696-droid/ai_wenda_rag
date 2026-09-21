@@ -10,7 +10,7 @@ from app.main import get_llm_provider
 from app.conversations.schemas import SendMessage
 from app.conversations.store import HistoryError
 from app.migrations import initialize_database, SQL_DIR
-from app.services.llm import LLMError
+from app.integrations.llm import LLMError
 
 
 class Model:
@@ -164,7 +164,7 @@ def test_v2_migration_preserves_accounts_and_is_repeatable(tmp_path):
     initialize_database(path)
     with sqlite3.connect(path) as db:
         assert db.execute("SELECT username FROM users").fetchone()[0] == "preserved"
-        assert db.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall() == [(1,), (2,), (3,)]
+        assert db.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall() == [(1,), (2,), (3,), (4,)]
         assert {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")} >= {"messages", "conversations"}
 
 

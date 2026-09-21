@@ -618,6 +618,15 @@ h1 span {
 .markdown-body ol {
   padding-left: 24px;
 }
+.markdown-body .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 0;
+}
+.markdown-body .katex {
+  font-size: 1.05em;
+}
 .copy-button {
   display: inline-flex;
   gap: 5px;

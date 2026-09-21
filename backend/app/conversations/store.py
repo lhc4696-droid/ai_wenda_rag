@@ -4,6 +4,7 @@ from uuid import uuid4
 from app.auth.store import AuthStore
 from app.conversations.schemas import SendMessage
 from app.schemas import ChatMessage, ChatResponse
+from app.attachments.store import AttachmentStore
 
 
 class HistoryError(Exception):
@@ -15,6 +16,10 @@ class HistoryError(Exception):
 class ConversationStore:
     def __init__(self, auth: AuthStore):
         self.auth = auth
+
+    @staticmethod
+    def message(db, row):
+        return {**dict(row), "attachments": AttachmentStore.for_message(db, row["id"])}
 
     @staticmethod
     def owned(db, user_id, conversation_id):
@@ -60,7 +65,7 @@ class ConversationStore:
             conversation = self.owned(db, user_id, conversation_id)
             self.recover(db, user_id)
             rows = db.execute("SELECT * FROM messages WHERE conversation_id = ? AND sequence < ? ORDER BY sequence DESC LIMIT ?", (conversation_id, before or conversation["last_sequence"] + 1, limit + 1)).fetchall()
-            items = [dict(row) for row in reversed(rows[:limit])]
+            items = [self.message(db, row) for row in reversed(rows[:limit])]
             return {"conversation": conversation, "messages": items, "next_before": items[0]["sequence"] if len(rows) > limit else None}
 
     def rename(self, user_id, conversation_id, title):
@@ -88,11 +93,12 @@ class ConversationStore:
             self.recover(db, user_id)
             existing = db.execute("SELECT * FROM messages WHERE conversation_id = ? AND client_message_id = ? AND role = 'user'", (conversation_id, client_id)).fetchone()
             if existing:
-                if existing["content"] != data.content:
+                previous = AttachmentStore.for_message(db, existing["id"])
+                if existing["content"] != data.content or [a["id"] for a in previous] != [a.hex for a in data.attachment_ids]:
                     raise HistoryError("同一请求编号不能用于不同问题", "MESSAGE_ID_CONFLICT")
                 if existing["status"] == "completed":
                     reply = db.execute("SELECT * FROM messages WHERE reply_to_id = ?", (existing["id"],)).fetchone()
-                    return {"cached": {"conversation": conversation, "user_message": dict(existing), "assistant_message": dict(reply), "replayed": True}}
+                    return {"cached": {"conversation": conversation, "user_message": self.message(db, existing), "assistant_message": self.message(db, reply), "replayed": True}}
                 if existing["status"] == "pending":
                     raise HistoryError("这个问题仍在处理中，请稍后刷新会话", "TURN_PENDING", 409, 2)
                 if not data.retry:
@@ -111,13 +117,15 @@ class ConversationStore:
                 message_id, sequence = uuid4().hex, conversation["last_sequence"] + 1
                 db.execute("""INSERT INTO messages (id, conversation_id, client_message_id, sequence, role, content, status, request_id, lease_expires_at, created_at)
                     VALUES (?, ?, ?, ?, 'user', ?, 'pending', ?, ?, ?)""", (message_id, conversation_id, client_id, sequence, data.content, request_id, now + timeout + 60, now))
+                AttachmentStore.bind(db, user_id, conversation_id, message_id, [a.hex for a in data.attachment_ids])
                 db.execute("UPDATE conversations SET last_sequence = ?, updated_at = ? WHERE id = ?", (sequence, now, conversation_id))
                 if conversation["last_sequence"] == 0 and not conversation["title_custom"]:
                     db.execute("UPDATE conversations SET title = ? WHERE id = ?", (" ".join(data.content.split())[:30], conversation_id))
-            rows = db.execute("SELECT role, content FROM messages WHERE conversation_id = ? AND sequence < ? AND status = 'completed' ORDER BY sequence DESC LIMIT 51", (conversation_id, sequence)).fetchall()
+            rows = db.execute("SELECT id, role, content FROM messages WHERE conversation_id = ? AND sequence < ? AND status = 'completed' ORDER BY sequence DESC LIMIT 51", (conversation_id, sequence)).fetchall()
             history = [ChatMessage(role=row["role"], content=row["content"]) for row in reversed(rows[:50])]
             history.append(ChatMessage(role="user", content=data.content))
-            return {"message_id": message_id, "messages": history, "trimmed": len(rows) > 50}
+            records = [dict(row) for row in reversed(rows[:50])] + [{"id": message_id, "role": "user", "content": data.content}]
+            return {"message_id": message_id, "messages": history, "records": records, "trimmed": len(rows) > 50}
 
     def complete(self, user_id, conversation_id, message_id, request_id, answer: ChatResponse):
         now = int(time.time())
@@ -132,7 +140,7 @@ class ConversationStore:
             db.execute("""INSERT INTO messages (id, conversation_id, client_message_id, sequence, role, content, status, model, request_id, reply_to_id, context_trimmed, answer_truncated, created_at)
                 VALUES (?, ?, ?, ?, 'assistant', ?, 'completed', ?, ?, ?, ?, ?, ?)""", (reply_id, conversation_id, row["client_message_id"], row["sequence"] + 1, answer.content, answer.model, request_id, message_id, int(answer.context_trimmed), int(answer.answer_truncated), now))
             db.execute("UPDATE conversations SET last_sequence = ?, updated_at = ? WHERE id = ?", (row["sequence"] + 1, now, conversation_id))
-            return {"conversation": self.owned(db, user_id, conversation_id), "user_message": dict(db.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()), "assistant_message": dict(db.execute("SELECT * FROM messages WHERE id = ?", (reply_id,)).fetchone()), "replayed": False}
+            return {"conversation": self.owned(db, user_id, conversation_id), "user_message": self.message(db, db.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()), "assistant_message": self.message(db, db.execute("SELECT * FROM messages WHERE id = ?", (reply_id,)).fetchone()), "replayed": False}
 
     def fail(self, user_id, conversation_id, request_id, code, message):
         with self.auth.connect() as db:

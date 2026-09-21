@@ -12,7 +12,7 @@ from app.auth.security import hash_password, verify_password
 from app.auth.store import AuthStore, InvalidEmailCode, SessionChanged
 from app.auth.verification import EmailVerification
 from app.main import create_app
-from app.services.email import SMTPMailer
+from app.integrations.email import SMTPMailer
 from tests.fakes import FakeMailer, register_user, request_code
 
 
@@ -146,7 +146,7 @@ def test_old_schema_migration_preserves_accounts_and_sessions(tmp_path):
     assert row["id"] == 7 and row["email"] is None and row["email_verified_at"] is None
     assert verify_password(CREDS["password"], row["password_hash"])
     with store.connect() as db:
-        assert [row[0] for row in db.execute("SELECT version FROM schema_migrations ORDER BY version")] == [1, 2, 3]
+        assert [row[0] for row in db.execute("SELECT version FROM schema_migrations ORDER BY version")] == [1, 2, 3, 4]
         assert db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
 
@@ -222,7 +222,7 @@ def test_new_email_endpoints_reject_untrusted_origin(client):
 
 @pytest.mark.parametrize("mode", ["ssl", "starttls"])
 def test_smtp_uses_encryption_and_does_not_include_password(app, monkeypatch, mode):
-    import app.services.email as email_module
+    import app.integrations.email as email_module
     actions = []
     messages = []
     class SMTPConnection:

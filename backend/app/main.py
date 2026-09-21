@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -9,8 +10,8 @@ from app.auth.routes import get_app_settings, require_trusted_origin, require_us
 from app.auth.store import AuthStore
 from app.config import Settings, get_settings
 from app.schemas import ChatRequest, ChatResponse, ErrorResponse, HealthResponse
-from app.services.llm import DashScopeLLM, LLMError, LLMProvider
-from app.services.email import SMTPMailer
+from app.integrations.llm import DashScopeLLM, LLMError, LLMProvider
+from app.integrations.email import SMTPMailer
 from app.auth.schemas import UserResponse
 from app.chat.service import ChatService
 from app.chat.store import ModelCallStore, ChatLimit
@@ -19,6 +20,9 @@ from app.schemas import ChatUsageResponse
 from app.conversations.routes import create_router as conversation_router
 from app.conversations.store import ConversationStore, HistoryError
 from app.conversations.service import ConversationService
+from app.attachments.service import AttachmentService
+from app.attachments.routes import router as attachment_router
+from app.attachments.schemas import AttachmentError
 
 
 def get_llm_provider(settings: Settings = Depends(get_app_settings)) -> LLMProvider:
@@ -30,31 +34,40 @@ def create_app(config: Settings | None = None) -> FastAPI:
     store = AuthStore(settings.auth_db_path)
     model_calls = ModelCallStore(store)
     chat_service = ChatService(model_calls, settings)
+    attachments = AttachmentService(store, settings)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
         store.initialize()
-        yield
+        cleaner = asyncio.create_task(attachments.cleanup_loop())
+        try:
+            yield
+        finally:
+            cleaner.cancel()
+            await asyncio.gather(cleaner, return_exceptions=True)
 
-    application = FastAPI(title="知言 AI API", description="邮箱注册、个人账号设置、持久化聊天历史与限额聊天。登录使用 HttpOnly Cookie。", version="0.5.0", lifespan=lifespan)
+    application = FastAPI(title="知言 AI API", description="账号、聊天历史、私有文档与图片附件问答。登录使用 HttpOnly Cookie。", version="0.6.0", lifespan=lifespan)
     application.state.settings = settings
     application.state.auth_store = store
     application.state.mailer = SMTPMailer(settings)
     application.state.model_calls = model_calls
     application.state.conversations = ConversationStore(store)
-    application.state.conversation_service = ConversationService(application.state.conversations, chat_service, settings)
+    application.state.attachments = attachments
+    application.state.conversation_service = ConversationService(application.state.conversations, chat_service, settings, attachments)
     application.add_middleware(
         CORSMiddleware, allow_origins=list(settings.cors_origins), allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "DELETE"], allow_headers=["Content-Type"],
         expose_headers=["X-Request-ID", "X-Error-Code", "Retry-After"],
     )
     application.include_router(auth_router)
+    application.include_router(attachment_router)
     application.include_router(conversation_router(get_llm_provider))
 
+    @application.exception_handler(AttachmentError)
     @application.exception_handler(HistoryError)
     async def history_error(request: Request, exc: HistoryError):
         headers = {"X-Error-Code": exc.code, "Cache-Control": "no-store"}
-        if exc.retry_after:
+        if getattr(exc, "retry_after", 0):
             headers["Retry-After"] = str(exc.retry_after)
         return JSONResponse(status_code=exc.status, content={"detail": str(exc)}, headers=headers)
 

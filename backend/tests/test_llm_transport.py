@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.services.email import EmailUnavailable, SMTPMailer, smtp_error_code
-from app.services.llm import DashScopeLLM, LLMError
+from app.integrations.email import EmailUnavailable, SMTPMailer, smtp_error_code
+from app.integrations.llm import DashScopeLLM, LLMError
 
 
 def test_async_sdk_receives_timeout_budget_and_explicit_session(app, monkeypatch):

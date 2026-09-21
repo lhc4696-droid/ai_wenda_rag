@@ -5,6 +5,9 @@ import ChatMessage from './ChatMessage.vue'
 import AccountSettings from './AccountSettings.vue'
 import AccountMenu from './AccountMenu.vue'
 import ConversationDialog from './ConversationDialog.vue'
+import AttachmentPicker from './AttachmentPicker.vue'
+import AttachmentCard from './AttachmentCard.vue'
+import '../attachments.css'
 import { checkHealth } from '../api/chat.js'
 import { MAX_MESSAGE_LENGTH, useConversations } from '../composables/useConversations.js'
 
@@ -46,6 +49,12 @@ const {
   renameConversation,
   deleteConversation,
   dispose,
+  draftAttachments,
+  attachmentCapabilities,
+  attachmentError,
+  attachmentBusy,
+  addFiles,
+  removeAttachment,
 } = useConversations()
 const sidebarOpen = ref(false)
 const actionDialog = ref(null)
@@ -499,7 +508,38 @@ onUnmounted(dispose)
 
         <div class="composer-area">
           <form class="composer" :class="{ 'is-waiting': isLoading }" @submit.prevent="submit">
+            <div
+              v-if="draftAttachments.length"
+              class="attachment-drafts"
+              aria-label="待发送附件"
+              :aria-busy="attachmentBusy"
+            >
+              <AttachmentCard
+                v-for="item in draftAttachments"
+                :key="item.localId || item.id"
+                :attachment="item"
+                removable
+                :disabled="submitting"
+                @remove="removeAttachment"
+              />
+            </div>
+            <p v-if="attachmentError" class="attachment-error" role="alert">
+              {{ attachmentError }}
+            </p>
+            <p v-if="draftAttachments.length" class="attachment-hint">
+              发送时会将相关附件内容交给模型服务。文档只读取正文，不含内嵌图片；请勿上传无权分享的资料。
+            </p>
             <label class="sr-only" for="message-input">输入你的问题</label>
+            <p
+              v-if="
+                attachmentCapabilities &&
+                !attachmentCapabilities.images_enabled &&
+                !draftAttachments.length
+              "
+              class="attachment-hint"
+            >
+              支持文档附件 · 图片功能需先配置视觉模型
+            </p>
             <textarea
               id="message-input"
               ref="textarea"
@@ -517,6 +557,19 @@ onUnmounted(dispose)
               @keydown="handleKeydown"
             ></textarea>
             <div class="composer-bottom">
+              <AttachmentPicker
+                :capabilities="attachmentCapabilities"
+                :disabled="
+                  isLoading ||
+                  opening ||
+                  refreshing ||
+                  Boolean(loadError) ||
+                  Boolean(error) ||
+                  signingOut ||
+                  draftAttachments.length >= 3
+                "
+                @files="addFiles"
+              />
               <span class="composer-context">
                 <AppIcon name="chat" :size="15" />
                 {{ hasMessages ? '已保存的历史支持继续追问' : '发送后自动保存到历史对话' }}

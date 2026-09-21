@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onUnmounted, ref } from 'vue'
 import AppIcon from './AppIcon.vue'
+import AttachmentCard from './AttachmentCard.vue'
 import { renderMarkdown } from '../lib/markdown.js'
 
 const props = defineProps({ message: { type: Object, required: true } })
@@ -47,6 +48,13 @@ onUnmounted(() => clearTimeout(timer))
     <template v-else>
       <span class="user-label">你</span>
       <div class="user-bubble">{{ message.content }}</div>
+      <div v-if="message.attachments?.length" class="message-attachments" aria-label="消息附件">
+        <AttachmentCard
+          v-for="attachment in message.attachments"
+          :key="attachment.id"
+          :attachment="attachment"
+        />
+      </div>
       <span v-if="message.status === 'failed'" class="message-status">这条问题未获得回答</span>
     </template>
   </article>

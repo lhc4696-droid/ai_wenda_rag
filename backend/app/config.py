@@ -38,6 +38,9 @@ class Settings:
     chat_global_requests_per_day: int = 1000
     chat_user_concurrency: int = 1
     chat_global_concurrency: int = 4
+    qwen_vision_model: str = ""
+    attachment_max_bytes: int = 10 * 1024 * 1024
+    attachment_user_quota: int = 200 * 1024 * 1024
 
     def __post_init__(self):
         if not 5 <= self.chat_timeout <= 100:
@@ -51,6 +54,10 @@ class Settings:
         for name in ("chat_requests_per_minute", "chat_requests_per_day", "chat_global_requests_per_day", "chat_user_concurrency", "chat_global_concurrency"):
             if getattr(self, name) < 1:
                 raise ValueError(f"{name.upper()} 必须大于 0")
+        if not 1 <= self.attachment_max_bytes <= 10 * 1024 * 1024:
+            raise ValueError("ATTACHMENT_MAX_BYTES 必须在 1–10485760 之间")
+        if self.attachment_user_quota < self.attachment_max_bytes + 3 * 1024 * 1024:
+            raise ValueError("ATTACHMENT_USER_QUOTA 至少为单个附件上限加 3145728 字节预览预留空间")
 
 
 def env_int(name: str, default: int) -> int:
@@ -103,4 +110,7 @@ def get_settings() -> Settings:
         chat_global_requests_per_day=env_int("CHAT_GLOBAL_REQUESTS_PER_DAY", 1000),
         chat_user_concurrency=env_int("CHAT_USER_CONCURRENCY", 1),
         chat_global_concurrency=env_int("CHAT_GLOBAL_CONCURRENCY", 4),
+        qwen_vision_model=os.getenv("QWEN_VISION_MODEL", "").strip(),
+        attachment_max_bytes=env_int("ATTACHMENT_MAX_BYTES", 10 * 1024 * 1024),
+        attachment_user_quota=env_int("ATTACHMENT_USER_QUOTA", 200 * 1024 * 1024),
     )

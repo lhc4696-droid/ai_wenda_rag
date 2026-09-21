@@ -2,6 +2,7 @@ from typing import Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from app.attachments.schemas import AttachmentResponse
 
 
 class CreateConversation(BaseModel):
@@ -29,6 +30,14 @@ class SendMessage(BaseModel):
     client_message_id: UUID
     expected_last_sequence: int = Field(ge=0, le=2_147_483_647)
     retry: bool = False
+    attachment_ids: list[UUID] = Field(default_factory=list, max_length=3)
+
+    @field_validator("attachment_ids")
+    @classmethod
+    def unique_attachments(cls, value):
+        if len(set(value)) != len(value):
+            raise ValueError("附件编号不能重复")
+        return value
 
     @field_validator("content")
     @classmethod
@@ -61,6 +70,7 @@ class MessageResponse(BaseModel):
     context_trimmed: bool
     answer_truncated: bool
     created_at: int
+    attachments: list[AttachmentResponse] = Field(default_factory=list)
 
 
 class ConversationPage(BaseModel):

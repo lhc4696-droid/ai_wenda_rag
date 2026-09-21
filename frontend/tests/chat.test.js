@@ -131,3 +131,13 @@ test('Markdown 支持代码，禁止原始 HTML 和危险链接', () => {
   assert.match(renderMarkdown('[资料](https://example.com)'), /rel="noopener noreferrer"/)
   assert.doesNotMatch(renderMarkdown('![图片](https://example.com/test.png)'), /<img/)
 })
+
+test('Markdown 支持行内和块级数学公式', () => {
+  const html = renderMarkdown(
+    '行内公式 $a \\neq 0$。\n\n$$\nx = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}\n$$',
+  )
+
+  assert.match(html, /class="katex"/)
+  assert.match(html, /class="katex-display"/)
+  assert.doesNotMatch(html, /\$\$/)
+})

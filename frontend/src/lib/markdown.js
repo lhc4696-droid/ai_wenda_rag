@@ -1,6 +1,13 @@
 import MarkdownIt from 'markdown-it'
+import { katex } from '@mdit/plugin-katex'
 
-const markdown = new MarkdownIt({ html: false, breaks: true, linkify: true })
+const markdown = new MarkdownIt({ html: false, breaks: true, linkify: true }).use(katex, {
+  delimiters: 'all',
+  throwOnError: false,
+  trust: false,
+  maxSize: 20,
+  maxExpand: 1000,
+})
 const defaultLink = markdown.renderer.rules.link_open
 markdown.renderer.rules.link_open = (tokens, index, options, env, renderer) => {
   tokens[index].attrSet('target', '_blank')

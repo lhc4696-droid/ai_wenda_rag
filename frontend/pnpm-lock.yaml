@@ -8,6 +8,12 @@ importers:
 
   .:
     dependencies:
+      '@mdit/plugin-katex':
+        specifier: ^1.1.1
+        version: 1.1.1(markdown-it@14.3.2)
+      katex:
+        specifier: ^0.18.7
+        version: 0.18.7
       markdown-it:
         specifier: ^14.1.0
         version: 14.3.2
@@ -206,6 +212,33 @@ packages:
   '@jridgewell/sourcemap-codec@1.6.0':
     resolution: {integrity: sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw==}
 
+  '@mdit/helper@1.1.1':
+    resolution: {integrity: sha512-Rrl14ZjFerzfAqCt0zxAWbPgRpsumgm9iBLrCVE05WS8dM6v/LnF1ppPFVnRz1F7fAaxn0kTFOlYwzcY+kRsHQ==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      markdown-it: ^15.0.1
+    peerDependenciesMeta:
+      markdown-it:
+        optional: true
+
+  '@mdit/plugin-katex@1.1.1':
+    resolution: {integrity: sha512-M7xMJYUg4GLv5iz0wujL84yYB7HtNNJgY4tUHcV13tvHJo0gPb8Xb13p6tvwvxfKSYG+fqT3HHXOawiozcgtyw==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      markdown-it: ^15.0.1
+    peerDependenciesMeta:
+      markdown-it:
+        optional: true
+
+  '@mdit/plugin-tex@1.1.1':
+    resolution: {integrity: sha512-it1Nk5hbqL20YdaurYD3LiXiudEG/r6gqMYLIJNSg5d2qafrvMtYjUVKQbaHptsOLtuh0LHTHRJGXuw81N8AUA==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      markdown-it: ^15.0.1
+    peerDependenciesMeta:
+      markdown-it:
+        optional: true
+
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     resolution: {integrity: sha512-oTXEIha4SsuXdTA4Iyskj0kpdx2yVXdhd75c2v3xGrHFfVMsbhTPZU/nMPL4sWKo4pBHm3aucLaqGlF696dTyQ==}
     engines: {node: ^22.20 || ^24.12 || >=25}
@@ -399,6 +432,10 @@ packages:
   argparse@2.0.1:
     resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
 
+  commander@15.0.0:
+    resolution: {integrity: sha512-z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg==}
+    engines: {node: '>=22.12.0'}
+
   csstype@3.2.3:
     resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
 
@@ -431,6 +468,10 @@ packages:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
+
+  katex@0.18.7:
+    resolution: {integrity: sha512-h+UCwkZ+4Jz8WQ7MLGfj7UVFrRCizGb912fwF4luGdYsC5paYG1vx+jy+KRcC/XkpjGva/P7nAWuxNnPzRvzHw==}
+    hasBin: true
 
   linkify-it@5.0.2:
     resolution: {integrity: sha512-ONTm2jCMAVZjgQa/Fy1kScXsuOoF5NPTsoFBdE1KVIZ2vAh/r9+Bqo+0jINCBYnavTPQZz38QzFTme79ENoN3Q==}
@@ -639,6 +680,24 @@ snapshots:
 
   '@jridgewell/sourcemap-codec@1.6.0': {}
 
+  '@mdit/helper@1.1.1(markdown-it@14.3.2)':
+    optionalDependencies:
+      markdown-it: 14.3.2
+
+  '@mdit/plugin-katex@1.1.1(markdown-it@14.3.2)':
+    dependencies:
+      '@mdit/helper': 1.1.1(markdown-it@14.3.2)
+      '@mdit/plugin-tex': 1.1.1(markdown-it@14.3.2)
+      katex: 0.18.7
+    optionalDependencies:
+      markdown-it: 14.3.2
+
+  '@mdit/plugin-tex@1.1.1(markdown-it@14.3.2)':
+    dependencies:
+      '@mdit/helper': 1.1.1(markdown-it@14.3.2)
+    optionalDependencies:
+      markdown-it: 14.3.2
+
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true
 
@@ -787,6 +846,8 @@ snapshots:
 
   argparse@2.0.1: {}
 
+  commander@15.0.0: {}
+
   csstype@3.2.3: {}
 
   entities@4.5.0: {}
@@ -830,6 +891,10 @@ snapshots:
 
   fsevents@2.3.3:
     optional: true
+
+  katex@0.18.7:
+    dependencies:
+      commander: 15.0.0
 
   linkify-it@5.0.2:
     dependencies:

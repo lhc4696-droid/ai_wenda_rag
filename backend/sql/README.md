@@ -14,7 +14,9 @@ SQL 脚本是 `backend/sql/schema.sql`；Python 初始化入口和后端启动�
 
 数据库路径配置保持不变；需要变更位置时，添加 `AUTH_DB_PATH=data/zhiyan.sqlite3`。相对路径以 `backend` 为基准。邮箱发送另外需要 SMTP 和 EMAIL_CODE_SECRET 配置，见后端 README。
 
-## 八张表
+## 十张表
+
+2026-09-21 新增 `attachments`（所属账号/会话、文件信息、解析文字、状态、额度及过期时间）和 `message_attachments`（消息与附件的关联及顺序）。文件本体在数据库旁的私有 attachments 目录，不存 Base64 到消息表。删除会话会触发附件待清理标记，后台清理磁盘内容。未发送附件 24 小时后回收，失败清理会重试。
 
 | 表 | 字段 | 用途 |
 |---|---|---|
@@ -26,6 +28,8 @@ SQL 脚本是 `backend/sql/schema.sql`；Python 初始化入口和后端启动�
 | `model_calls` | `request_id`、`user_id`、`model`、时间、状态、字符数、Token 数和错误类别 | 聊天额度、并发租约与调用统计；不保存问题和回答正文 |
 | `conversations` | `id`、`user_id`、`title`、`title_custom`、`created_at`、`updated_at`、`last_sequence` | 当前账号的聊天会话、标题和消息序号 |
 | `messages` | `id`、`conversation_id`、`client_message_id`、`sequence`、`role`、`content`、`status`、`model`、`request_id`、`reply_to_id`、租约、错误和裁剪标志 | 聊天问题与回答；保证顺序和重试幂等，删除会话时级联删除 |
+| `attachments` | `id`、`user_id`、`conversation_id`、文件名、类型、大小、额度、状态、解析正文、说明及过期时间 | 私有附件元数据和所有权，原文件另存磁盘 |
+| `message_attachments` | `message_id`、`attachment_id`、`position` | 消息与附件的关联及顺序，同会话重提问时可复用 |
 
 一个用户可以拥有多条登录会话。浏览器保存随机会话令牌，数据库保存其 SHA-256 摘要；退出时删除对应会话，过期的会话不能继续访问聊天接口。
 
@@ -58,4 +62,4 @@ SQL 脚本是 `backend/sql/schema.sql`；Python 初始化入口和后端启动�
 .\venv\Scripts\python.exe backend\migrate_db.py --backup
 ```
 
-迁移定义位于 `backend/sql/migrations/001_email_verification.sql`（邮箱验证码）、`002_model_calls.sql`（模型调用元数据）和 `003_conversation_history.sql`（聊天历史），当前结构版本为 3，执行器为 `backend/app/migrations.py`。字段变更、建表和版本记录处于同一事务，按顺序升级，重复启动安全；不自动降级更新版本的数据库。不要单独向旧库执行新的 schema.sql 来代替迁移。
+迁移定义位于 `backend/sql/migrations/001_email_verification.sql`（邮箱验证码）、`002_model_calls.sql`（模型调用元数据）、`003_conversation_history.sql`（聊天历史）和 `004_attachments.sql`（私有附件），当前结构版本为 4，执行器为 `backend/app/migrations.py`。字段变更、建表和版本记录处于同一事务，按顺序升级，重复启动安全；不自动降级更新版本的数据库。不要单独向旧库执行新的 schema.sql 来代替迁移。`migrate_db.py --backup` 只备份 SQLite，附件目录需另行备份。

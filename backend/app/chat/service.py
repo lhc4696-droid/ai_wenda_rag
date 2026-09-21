@@ -5,20 +5,28 @@ from app.chat.store import ModelCallStore
 from app.config import Settings
 from app.observability import logger
 from app.schemas import ChatMessage, ChatResponse
-from app.services.llm import LLMError, LLMProvider, LLMResult
+from app.integrations.llm import LLMError, LLMProvider, LLMResult
+from app.attachments.context import ATTACHMENT_POLICY
+
+
+def message_cost(message):
+    # 图片按保守的额外输入预算计算，不把 Base64 长度误当成文本 Token。
+    return len(message.content) + 4000 * len(getattr(message, "images", []))
 
 
 def bounded_context(messages: list[ChatMessage], settings: Settings):
     selected = list(messages)
-    budget = settings.chat_context_chars - len(settings.system_prompt)
-    if len(selected[-1].content) > budget:
-        raise LLMError("当前问题超过上下文预算，请缩短问题后重试", "CHAT_INPUT_TOO_LONG", 422)
-    total = sum(len(item.content) for item in selected)
-    while total > budget and len(selected) > 1:
-        total -= len(selected.pop(0).content)
+    budget = settings.chat_context_chars - len(settings.system_prompt) - len(ATTACHMENT_POLICY)
+    if message_cost(selected[-1]) > budget:
+        raise LLMError("问题与附件超过本次上下文预算，请减少附件或缩短问题后重试", "CHAT_INPUT_TOO_LONG", 422)
+    total = sum(message_cost(item) for item in selected)
+    def too_many_images():
+        return sum(len(getattr(item, "images", [])) for item in selected) > 3
+    while (total > budget or too_many_images()) and len(selected) > 1:
+        total -= message_cost(selected.pop(0))
         # 不让裁剪后的上下文以孤立的 assistant 回答开头。
         while len(selected) > 1 and selected[0].role == "assistant":
-            total -= len(selected.pop(0).content)
+            total -= message_cost(selected.pop(0))
     return selected, len(selected) != len(messages)
 
 
@@ -50,7 +58,8 @@ class ChatService:
     async def answer(self, messages, user_id: int, identifier: str, provider: LLMProvider, disconnected=None):
         selected, trimmed = bounded_context(messages, self.settings)
         started = time.monotonic()
-        reservation = asyncio.create_task(asyncio.to_thread(self.store.reserve, identifier, user_id, sum(len(item.content) for item in selected) + len(self.settings.system_prompt), self.settings))
+        planned_model = self.settings.qwen_vision_model if any(getattr(item, "images", []) for item in selected) else self.settings.qwen_model
+        reservation = asyncio.create_task(asyncio.to_thread(self.store.reserve, identifier, user_id, sum(len(item.content) for item in selected) + len(self.settings.system_prompt) + len(ATTACHMENT_POLICY), self.settings, planned_model))
         try:
             await asyncio.shield(reservation)
         except asyncio.CancelledError:
@@ -75,7 +84,7 @@ class ChatService:
             truncated = len(content) > 20_000 or result.finish_reason == "length"
             content = content[:20_000]
             state, error_code = "succeeded", None
-            return ChatResponse(content=content, model=self.settings.qwen_model, context_trimmed=trimmed, answer_truncated=truncated, request_id=identifier)
+            return ChatResponse(content=content, model=result.model or self.settings.qwen_model, context_trimmed=trimmed, answer_truncated=truncated, request_id=identifier)
         except TimeoutError:
             state, error_code = "timed_out", "LLM_TIMEOUT"
             raise LLMError("AI 服务响应超时，请稍后重试或缩短问题", error_code, 504) from None

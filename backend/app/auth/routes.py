@@ -8,7 +8,7 @@ from app.auth.security import DUMMY_PASSWORD_HASH, hash_password, verify_passwor
 from app.auth.store import AuthStore, InvalidEmailCode, SessionChanged, TooManyAttempts, UsernameTaken
 from app.auth.verification import EmailVerification
 from app.config import Settings
-from app.services.email import EmailUnavailable
+from app.integrations.email import EmailUnavailable
 from app.auth.account import AccountService, IncorrectPassword, SamePassword
 from app.auth.schemas import RenameAccountRequest, ChangePasswordRequest
 

@@ -1,6 +1,6 @@
 # 知言 AI 后端
 
-当前版本 **0.5.0**：新增持久化聊天历史、会话分页、重命名与删除，保留个人账号设置、调用限额与上下文保护。说明与手动验收见 [聊天历史实现与验收](../docs/聊天历史实现与验收.md)。本轮未运行功能测试。
+当前版本 **0.6.0**：在聊天历史基础上加入私有文档/图片附件上传、解析、消息关联、受保护下载和过期清理。图片需配置 QWEN_VISION_MODEL；文档继续使用原文字模型。说明与手动验收见 [聊天附件实现与验收](../docs/聊天附件实现与验收.md)。本轮未运行功能测试。
 
 这是知言 AI 的 FastAPI 后端，提供邮箱验证码注册、忘记密码、登录、退出、会话校验、健康检查和多轮对话接口。
 
@@ -53,7 +53,12 @@ Copy-Item backend/.env.example backend/.env
 | `GET /api/conversations/{id}/messages` | 按 limit、before 读取消息，默认最近 50 条 |
 | `PATCH /api/conversations/{id}` | 提交 title 重命名 |
 | `DELETE /api/conversations/{id}` | 确认后删除会话及全部消息，成功 204 |
-| `POST /api/conversations/{id}/messages` | content、client_message_id、expected_last_sequence、retry；由后端读取上下文并保存问答 |
+| `POST /api/conversations/{id}/messages` | content、client_message_id、expected_last_sequence、retry、可选 attachment_ids；由后端读取上下文并保存问答 |
+| `GET /api/attachments/capabilities` | 附件类型、大小限制、图片能力配置 |
+| `POST /api/attachments` | multipart/form-data，单个 file；上传并解析，返回 ready 或 failed 状态 |
+| `GET /api/attachments/{id}` | 查询自己的附件信息 |
+| `GET /api/attachments/{id}/content` | 受保护的图片预览或文档下载 |
+| `DELETE /api/attachments/{id}` | 删除未发送的附件；已发送附件随会话删除 |
 | `POST /api/chat` | 已弃用的兼容接口；登录后可调用，但不保存历史 |
 
 在 Swagger 中先执行注册或登录，使用同一浏览器、同一主机地址的 `/docs` 测试聊天，浏览器会自动带上 Cookie。不要混用 `localhost` 和 `127.0.0.1` 的登录状态。
@@ -88,7 +93,7 @@ Copy-Item backend/.env.example backend/.env
 
 ## 6. 数据库与 SQL
 
-默认 SQLite 文件为 `backend/data/zhiyan.sqlite3`，启动时自动创建或迁移到版本 3。建表脚本为 `backend/sql/schema.sql`，包含 `users`、`sessions`、`auth_attempts`、`email_verifications`、`schema_migrations`、`model_calls`、`conversations`、`messages`；结构解释见 [数据库说明](D:/code/project_python/wen_da/backend/sql/README.md)。升级前推荐运行 `backend/migrate_db.py --backup` 备份。也可手动初始化：
+默认 SQLite 文件为 `backend/data/zhiyan.sqlite3`，启动时自动创建或迁移到版本 4。建表脚本为 `backend/sql/schema.sql`，包含 `users`、`sessions`、`auth_attempts`、`email_verifications`、`schema_migrations`、`model_calls`、`conversations`、`messages`、`attachments`、`message_attachments`；结构解释见 [数据库说明](D:/code/project_python/wen_da/backend/sql/README.md)。升级前推荐运行 `backend/migrate_db.py --backup` 备份数据库；附件目录应另外一起备份。也可手动初始化：
 
 ```powershell
 .\venv\Scripts\python.exe backend\init_db.py

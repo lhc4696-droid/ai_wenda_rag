@@ -1,5 +1,5 @@
 from app.main import get_llm_provider
-from app.services.llm import LLMError
+from app.integrations.llm import LLMError
 
 
 class FakeLLM:

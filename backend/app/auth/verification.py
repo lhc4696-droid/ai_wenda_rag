@@ -2,7 +2,7 @@
 
 from app.auth.store import AuthStore
 from app.config import Settings
-from app.services.email import EmailUnavailable, Mailer
+from app.integrations.email import EmailUnavailable, Mailer
 from app.observability import logger, request_id
 
 

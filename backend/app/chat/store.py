@@ -14,7 +14,7 @@ class ModelCallStore:
     def __init__(self, auth: AuthStore):
         self.auth = auth
 
-    def reserve(self, identifier: str, user_id: int, input_chars: int, settings: Settings):
+    def reserve(self, identifier: str, user_id: int, input_chars: int, settings: Settings, model=None):
         now = int(time.time())
         day_start = now // 86400 * 86400
         with self.auth.connect() as db:
@@ -35,7 +35,7 @@ class ModelCallStore:
                 raise ChatLimit("今日提问额度已用完，请在额度重置后继续", "CHAT_DAILY_LIMIT", day_start + 86400 - now)
             if day[0] >= settings.chat_global_requests_per_day:
                 raise ChatLimit("今日服务调用额度已用完，请在额度重置后继续", "CHAT_GLOBAL_DAILY_LIMIT", day_start + 86400 - now)
-            db.execute("INSERT INTO model_calls (request_id, user_id, model, created_at, lease_expires_at, state, input_chars) VALUES (?, ?, ?, ?, ?, 'running', ?)", (identifier, user_id, settings.qwen_model, now, now + settings.chat_timeout + 30, input_chars))
+            db.execute("INSERT INTO model_calls (request_id, user_id, model, created_at, lease_expires_at, state, input_chars) VALUES (?, ?, ?, ?, ?, 'running', ?)", (identifier, user_id, model or settings.qwen_model, now, now + settings.chat_timeout + 30, input_chars))
 
     def finish(self, identifier: str, state: str, duration_ms: int, *, output_chars=None, input_tokens=None, output_tokens=None, error_code=None):
         with self.auth.connect() as db:
