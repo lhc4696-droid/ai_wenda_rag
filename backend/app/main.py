@@ -23,6 +23,12 @@ from app.conversations.service import ConversationService
 from app.attachments.service import AttachmentService
 from app.attachments.routes import router as attachment_router
 from app.attachments.schemas import AttachmentError
+from app.rag.service import RagService
+from app.coding.schemas import CodingError
+from app.coding.store import retire_zip_tasks
+from app.coding.local_routes import router as local_coding_router
+from app.coding.local_store import LocalCodingStore
+from app.coding.local_service import LocalCodingService
 
 
 def get_llm_provider(settings: Settings = Depends(get_app_settings)) -> LLMProvider:
@@ -35,25 +41,35 @@ def create_app(config: Settings | None = None) -> FastAPI:
     model_calls = ModelCallStore(store)
     chat_service = ChatService(model_calls, settings)
     attachments = AttachmentService(store, settings)
+    rag = RagService(store, settings)
+    attachments.rag = rag
+    local_coding = LocalCodingService(LocalCodingStore(store), model_calls, settings)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
         store.initialize()
+        # Local MVP is a single-worker service. An interrupted process must not
+        # silently resume old code-running tasks after a restart.
+        await asyncio.to_thread(retire_zip_tasks, store)
+        await asyncio.to_thread(local_coding.store.recover_interrupted)
         cleaner = asyncio.create_task(attachments.cleanup_loop())
         try:
             yield
         finally:
+            await local_coding.shutdown()
             cleaner.cancel()
             await asyncio.gather(cleaner, return_exceptions=True)
 
-    application = FastAPI(title="知言 AI API", description="账号、聊天历史、私有文档与图片附件问答。登录使用 HttpOnly Cookie。", version="0.6.0", lifespan=lifespan)
+    application = FastAPI(title="知言 AI API", description="账号、聊天历史、私有附件、按需 RAG 与本地文件编程。登录使用 HttpOnly Cookie。", version="0.9.0", lifespan=lifespan)
     application.state.settings = settings
     application.state.auth_store = store
     application.state.mailer = SMTPMailer(settings)
     application.state.model_calls = model_calls
     application.state.conversations = ConversationStore(store)
     application.state.attachments = attachments
-    application.state.conversation_service = ConversationService(application.state.conversations, chat_service, settings, attachments)
+    application.state.rag = rag
+    application.state.local_coding = local_coding
+    application.state.conversation_service = ConversationService(application.state.conversations, chat_service, settings, attachments, rag)
     application.add_middleware(
         CORSMiddleware, allow_origins=list(settings.cors_origins), allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "DELETE"], allow_headers=["Content-Type"],
@@ -61,9 +77,11 @@ def create_app(config: Settings | None = None) -> FastAPI:
     )
     application.include_router(auth_router)
     application.include_router(attachment_router)
+    application.include_router(local_coding_router)
     application.include_router(conversation_router(get_llm_provider))
 
     @application.exception_handler(AttachmentError)
+    @application.exception_handler(CodingError)
     @application.exception_handler(HistoryError)
     async def history_error(request: Request, exc: HistoryError):
         headers = {"X-Error-Code": exc.code, "Cache-Control": "no-store"}

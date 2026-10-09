@@ -39,6 +39,18 @@ onUnmounted(() => clearTimeout(timer))
         <span class="ai-tag">AI</span>
       </div>
       <div class="markdown-body" v-html="html"></div>
+      <div v-if="message.sources?.length" class="answer-sources" aria-label="回答参考资料">
+        <strong>参考资料</strong>
+        <details v-for="(source, index) in message.sources" :key="`${source.attachment_id}-${index}`">
+          <summary>
+            [{{ index + 1 }}] {{ source.filename }}{{ source.page ? ` · 第 ${source.page} 页` : '' }}
+          </summary>
+          <p>{{ source.snippet }}</p>
+          <a :href="`/api/attachments/${source.attachment_id}/content`" target="_blank" rel="noopener noreferrer">
+            查看原文件
+          </a>
+        </details>
+      </div>
       <p v-if="message.notice" class="answer-notice">{{ message.notice }}</p>
       <button class="copy-button" type="button" aria-label="复制回答" @click="copy">
         <AppIcon :name="copyState === '已复制' ? 'check' : 'copy'" :size="14" />
@@ -48,6 +60,7 @@ onUnmounted(() => clearTimeout(timer))
     <template v-else>
       <span class="user-label">你</span>
       <div class="user-bubble">{{ message.content }}</div>
+      <span v-if="message.source_mode === 'documents'" class="message-source-mode">查资料</span>
       <div v-if="message.attachments?.length" class="message-attachments" aria-label="消息附件">
         <AttachmentCard
           v-for="attachment in message.attachments"

@@ -21,12 +21,14 @@ class AttachmentService:
         self.storage = AttachmentStorage(settings.auth_db_path.parent / "attachments")
         self.settings = settings
         self.slots = asyncio.Semaphore(2)
+        self.rag = None
 
     def capabilities(self):
         return {"extensions": sorted(EXTENSIONS), "max_files": 3,
                 "max_bytes": self.settings.attachment_max_bytes,
                 "images_enabled": bool(self.settings.qwen_vision_model),
-                "vision_model": self.settings.qwen_vision_model or None}
+                "vision_model": self.settings.qwen_vision_model or None,
+                "rag_enabled": self.settings.rag_enabled}
 
     async def process(self, identifier, extension):
         # Windows 兼容的独立解析进程；不继承模型/SMTP/验证码密钥。
@@ -90,13 +92,16 @@ class AttachmentService:
         with self.store.auth.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             db.execute("UPDATE attachments SET status = 'deleting' WHERE conversation_id IS NULL AND expires_at <= ?", (now,))
-            identifiers = [row[0] for row in db.execute("SELECT id FROM attachments WHERE status = 'deleting'")]
-        for identifier in identifiers:
+            identifiers = [(row[0], row[1]) for row in db.execute("SELECT id, user_id FROM attachments WHERE status = 'deleting'")]
+        for identifier, owner in identifiers:
             try:
+                if self.settings.rag_enabled and self.rag:
+                    # 删除向量成功后才删除源文件和元数据；Qdrant 暂时离线则下次清理重试。
+                    asyncio.run(self.rag.vectors.delete_attachment(owner, identifier))
                 self.storage.delete(identifier)
                 with self.store.auth.connect() as db:
                     db.execute("DELETE FROM attachments WHERE id = ? AND status = 'deleting'", (identifier,))
-            except (OSError, ValueError):
+            except Exception:
                 logger.warning("attachment_cleanup_failed id=%s", identifier)
         # 账号被删除时 FK 会清理元数据；仅回收本目录内、超过 24 小时的孤立内部文件。
         if self.storage.root.exists():

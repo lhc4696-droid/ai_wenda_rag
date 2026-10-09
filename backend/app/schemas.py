@@ -33,6 +33,7 @@ class ChatResponse(BaseModel):
     context_trimmed: bool = False
     answer_truncated: bool = False
     request_id: str | None = None
+    sources: list[dict] = Field(default_factory=list)
 
 
 class ChatUsageResponse(BaseModel):

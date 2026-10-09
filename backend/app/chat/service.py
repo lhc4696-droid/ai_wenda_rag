@@ -53,7 +53,11 @@ class ChatService:
         finally:
             model_task.cancel()
             disconnect_task.cancel()
-            await asyncio.gather(model_task, disconnect_task, return_exceptions=True)
+            # 某些 ASGI receive 实现会在 is_disconnected 中持续等待；不能因此把
+            # 已完成的模型响应一直拖到 CHAT_TIMEOUT。取消后限时收尾。
+            _, pending = await asyncio.wait((model_task, disconnect_task), timeout=1)
+            if pending:
+                logger.warning("chat_disconnect_watch_cleanup_pending count=%s", len(pending))
 
     async def answer(self, messages, user_id: int, identifier: str, provider: LLMProvider, disconnected=None):
         selected, trimmed = bounded_context(messages, self.settings)

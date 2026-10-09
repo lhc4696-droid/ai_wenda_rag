@@ -146,7 +146,7 @@ def test_old_schema_migration_preserves_accounts_and_sessions(tmp_path):
     assert row["id"] == 7 and row["email"] is None and row["email_verified_at"] is None
     assert verify_password(CREDS["password"], row["password_hash"])
     with store.connect() as db:
-        assert [row[0] for row in db.execute("SELECT version FROM schema_migrations ORDER BY version")] == [1, 2, 3, 4]
+        assert [row[0] for row in db.execute("SELECT version FROM schema_migrations ORDER BY version")] == [1, 2, 3, 4, 5, 6, 7, 8]
         assert db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
 

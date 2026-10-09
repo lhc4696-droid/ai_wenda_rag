@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { historyApi } from '../api/conversations.js'
 import { attachmentApi } from '../api/attachments.js'
+import { decideRetrievalRoute } from '../lib/retrieval-route.js'
 
 export const MAX_MESSAGE_LENGTH = 20_000
 
@@ -17,6 +18,8 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
   const current = ref(null)
   const messages = ref([])
   const draft = ref('')
+  const sourceMode = ref('auto')
+  const routeChoice = ref(false)
   const draftAttachments = ref([])
   const attachmentError = ref('')
   const attachmentCapabilities = ref(null)
@@ -38,6 +41,9 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
   const model = computed(
     () =>
       [...messages.value].reverse().find((message) => message.role === 'assistant')?.model || '',
+  )
+  const hasPriorDocuments = computed(() =>
+    messages.value.some((message) => message.attachments?.some((item) => item.kind === 'document')),
   )
   const tail = computed(() => messages.value.at(-1))
   const serverPending = computed(
@@ -108,7 +114,7 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
         continue
       }
       if (kind === 'image' && !attachmentCapabilities.value.images_enabled) {
-        attachmentError.value = '图片功能尚未启用，请先在后端配置 QWEN_VISION_MODEL。'
+        attachmentError.value = '图片功能尚未启用，请先在后端配置视觉模型 QWEN_VISION_MODEL。'
         continue
       }
       const localId = crypto.randomUUID()
@@ -218,6 +224,8 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
     loadError.value = error.value = notice.value = ''
     messages.value = []
     draft.value = ''
+    sourceMode.value = 'auto'
+    routeChoice.value = false
     nextBefore.value = null
   }
 
@@ -440,16 +448,58 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
     }
   }
 
-  async function send() {
+  function setSourceMode(value) {
+    if (!['auto', 'chat', 'documents'].includes(value)) return
+    sourceMode.value = value
+    routeChoice.value = false
+    attachmentError.value = ''
+  }
+
+  async function sendResolved(mode) {
+    if (mode === 'documents' && !current.value && !draftAttachments.value.some((item) => item.kind === 'document')) {
+      attachmentError.value = '当前对话没有文档。请先上传文字文档，再选择“查资料”。'
+      return
+    }
+    if (mode === 'documents' && attachmentCapabilities.value?.rag_enabled === false) {
+      attachmentError.value = '后端尚未启用 RAG，请配置后重启服务。'
+      return
+    }
+    routeChoice.value = false
     if (!canSendWithAttachments.value) return
     await submit({
       content: draft.value.trim(),
       client_message_id: crypto.randomUUID(),
       expected_last_sequence: current.value?.last_sequence || 0,
+      source_mode: mode,
       ...(draftAttachments.value.length
         ? { attachment_ids: draftAttachments.value.map((item) => item.id) }
         : {}),
     })
+  }
+
+  async function send() {
+    if (!canSendWithAttachments.value || routeChoice.value) return
+    let mode = sourceMode.value
+    if (mode === 'auto') {
+      mode = decideRetrievalRoute(draft.value, draftAttachments.value, hasPriorDocuments.value)
+      if (mode === 'choice') {
+        routeChoice.value = true
+        return
+      }
+      if (mode === 'documents' && attachmentCapabilities.value?.rag_enabled === false)
+        mode = 'legacy'
+    }
+    await sendResolved(mode)
+  }
+
+  async function chooseRoute(mode) {
+    if (!routeChoice.value || !['chat', 'documents'].includes(mode)) return
+    routeChoice.value = false
+    await sendResolved(mode)
+  }
+
+  function cancelRouteChoice() {
+    routeChoice.value = false
   }
 
   async function retry() {
@@ -467,6 +517,7 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
         content: tail.value.content,
         client_message_id: tail.value.client_message_id,
         expected_last_sequence: tail.value.sequence - 1,
+        source_mode: tail.value.source_mode || 'legacy',
         ...(tail.value.attachments?.length
           ? { attachment_ids: tail.value.attachments.map((item) => item.id) }
           : {}),
@@ -478,6 +529,7 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
   function editFailed() {
     if (isLoading.value || tail.value?.status !== 'failed' || loadError.value) return
     draft.value = tail.value.content
+    sourceMode.value = tail.value.source_mode === 'documents' ? 'documents' : tail.value.source_mode === 'chat' ? 'chat' : 'auto'
     draftAttachments.value = (tail.value.attachments || []).map((item) => ({ ...item }))
     error.value = ''
     notice.value = '原问题保留在历史中，修改后的问题会作为新消息发送。'
@@ -524,6 +576,8 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
     current,
     messages,
     draft,
+    sourceMode,
+    routeChoice,
     error,
     notice,
     loadError,
@@ -552,6 +606,9 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
     loadOlder,
     reset,
     send,
+    chooseRoute,
+    cancelRouteChoice,
+    setSourceMode,
     retry,
     editFailed,
     renameConversation,

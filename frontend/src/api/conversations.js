@@ -21,7 +21,7 @@ export const historyApi = {
   messages: (id, before, signal) =>
     historyRequest(`/${id}/messages?limit=50${before ? `&before=${before}` : ''}`, { signal }),
   send: (id, data, signal) =>
-    historyRequest(`/${id}/messages`, { method: 'POST', body: data, signal }, 120000),
+    historyRequest(`/${id}/messages`, { method: 'POST', body: data, signal }, data.source_mode === 'documents' ? 210000 : 120000),
   rename: (id, title, signal) =>
     historyRequest(`/${id}`, { method: 'PATCH', body: { title }, signal }),
   remove: (id, signal) => historyRequest(`/${id}`, { method: 'DELETE', signal }),

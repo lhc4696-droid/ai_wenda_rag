@@ -1,17 +1,41 @@
 <script setup>
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import AuthView from './components/AuthView.vue'
 import ChatWorkspace from './components/ChatWorkspace.vue'
+import LocalCodingWorkspace from './components/LocalCodingWorkspace.vue'
 import AppIcon from './components/AppIcon.vue'
 import { currentUser, signOut } from './api/auth.js'
+import { forgetOwnerCodingBindings } from './lib/coding-bindings.js'
 
 const user = ref(null)
 const checking = ref(true)
 const notice = ref('')
 const connectionError = ref('')
 const signingOut = ref(false)
+const workspace = ref('chat')
+const codingOpened = ref(false)
 let generation = 0
 let channel
+
+function openCoding() {
+  codingOpened.value = true
+  workspace.value = 'coding'
+}
+
+watch(
+  () => user.value?.id,
+  (owner, previousOwner) => {
+    // Also clear remembered roots when this page never opened the coding workspace.
+    // A normal refresh has no previousOwner, so it can restore still-granted bindings.
+    if (previousOwner && previousOwner !== owner && globalThis.indexedDB && navigator.locks) {
+      forgetOwnerCodingBindings(previousOwner).catch(() => {
+        notice.value = '账号已切换或退出，但本地目录绑定未能清除。共享电脑上请清理本站浏览器数据。'
+      })
+    }
+    workspace.value = 'chat'
+    codingOpened.value = false
+  },
+)
 
 async function loadSession({ invalidate = false } = {}) {
   const id = ++generation
@@ -119,12 +143,23 @@ onUnmounted(() => {
   <template v-else-if="user">
     <div v-if="connectionError" class="session-banner" role="alert">{{ connectionError }}</div>
     <ChatWorkspace
+      v-show="workspace === 'chat'"
       :key="user.id"
       :user="user"
       :signing-out="signingOut"
       @logout="logout"
       @profile-updated="profileUpdated"
       @password-changed="passwordChanged"
+      @open-coding="openCoding"
+    />
+    <LocalCodingWorkspace
+      v-if="codingOpened"
+      v-show="workspace === 'coding'"
+      :key="`coding-${user.id}`"
+      :user="user"
+      :active="workspace === 'coding'"
+      @back="workspace = 'chat'"
+      @auth-expired="expired"
     />
   </template>
   <div v-else-if="connectionError" class="auth-loading">

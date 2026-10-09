@@ -6,8 +6,8 @@ import time
 
 
 SQL_DIR = Path(__file__).resolve().parents[1] / "sql"
-MIGRATIONS = ((2, "002_model_calls.sql"), (3, "003_conversation_history.sql"), (4, "004_attachments.sql"))
-CURRENT_VERSION = 4
+MIGRATIONS = ((2, "002_model_calls.sql"), (3, "003_conversation_history.sql"), (4, "004_attachments.sql"), (5, "005_rag_modes.sql"), (6, "006_coding_agent.sql"), (7, "007_local_coding.sql"), (8, "008_local_coding_conversations.sql"))
+CURRENT_VERSION = 8
 
 
 def execute_statements(connection: sqlite3.Connection, source: str):
@@ -46,7 +46,26 @@ def initialize_database(path: Path):
             connection.execute("INSERT OR IGNORE INTO schema_migrations VALUES (1, ?)", (int(time.time()),))
             for version, filename in MIGRATIONS:
                 if version not in applied:
-                    execute_statements(connection, (SQL_DIR / "migrations" / filename).read_text(encoding="utf-8"))
+                    if version == 5:
+                        message_columns = {row[1] for row in connection.execute("PRAGMA table_info(messages)")}
+                        if {"source_mode", "sources_json"}.issubset(message_columns):
+                            # 新库已由 schema.sql 创建完整结构，不重复 ALTER。
+                            pass
+                        elif message_columns & {"source_mode", "sources_json"}:
+                            raise RuntimeError("RAG 消息字段结构不完整，请先备份数据库并检查迁移状态")
+                        else:
+                            execute_statements(connection, (SQL_DIR / "migrations" / filename).read_text(encoding="utf-8"))
+                    elif version == 8:
+                        task_columns = {row[1] for row in connection.execute("PRAGMA table_info(local_coding_tasks)")}
+                        if {"conversation_id", "turn_index"}.issubset(task_columns):
+                            # Fresh schema already contains the complete conversation model.
+                            pass
+                        elif task_columns & {"conversation_id", "turn_index"}:
+                            raise RuntimeError("编程会话结构不完整，请先备份数据库并检查迁移状态")
+                        else:
+                            execute_statements(connection, (SQL_DIR / "migrations" / filename).read_text(encoding="utf-8"))
+                    else:
+                        execute_statements(connection, (SQL_DIR / "migrations" / filename).read_text(encoding="utf-8"))
                     connection.execute("INSERT INTO schema_migrations VALUES (?, ?)", (version, int(time.time())))
             execute_statements(connection, (SQL_DIR / "schema.sql").read_text(encoding="utf-8"))
     finally:

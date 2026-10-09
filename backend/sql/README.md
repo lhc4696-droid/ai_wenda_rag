@@ -14,7 +14,7 @@ SQL 脚本是 `backend/sql/schema.sql`；Python 初始化入口和后端启动�
 
 数据库路径配置保持不变；需要变更位置时，添加 `AUTH_DB_PATH=data/zhiyan.sqlite3`。相对路径以 `backend` 为基准。邮箱发送另外需要 SMTP 和 EMAIL_CODE_SECRET 配置，见后端 README。
 
-## 十张表
+## 业务数据表
 
 2026-09-21 新增 `attachments`（所属账号/会话、文件信息、解析文字、状态、额度及过期时间）和 `message_attachments`（消息与附件的关联及顺序）。文件本体在数据库旁的私有 attachments 目录，不存 Base64 到消息表。删除会话会触发附件待清理标记，后台清理磁盘内容。未发送附件 24 小时后回收，失败清理会重试。
 
@@ -27,9 +27,13 @@ SQL 脚本是 `backend/sql/schema.sql`；Python 初始化入口和后端启动�
 | `schema_migrations` | `version`、`applied_at` | 已执行迁移版本与时间 |
 | `model_calls` | `request_id`、`user_id`、`model`、时间、状态、字符数、Token 数和错误类别 | 聊天额度、并发租约与调用统计；不保存问题和回答正文 |
 | `conversations` | `id`、`user_id`、`title`、`title_custom`、`created_at`、`updated_at`、`last_sequence` | 当前账号的聊天会话、标题和消息序号 |
-| `messages` | `id`、`conversation_id`、`client_message_id`、`sequence`、`role`、`content`、`status`、`model`、`request_id`、`reply_to_id`、租约、错误和裁剪标志 | 聊天问题与回答；保证顺序和重试幂等，删除会话时级联删除 |
+| `messages` | `id`、`conversation_id`、`client_message_id`、`sequence`、`role`、`content`、`status`、`model`、`request_id`、`reply_to_id`、`source_mode`、`sources_json`、租约、错误和裁剪标志 | 聊天问题与回答；记录资料模式与检索来源，保证顺序和重试幂等，删除会话时级联删除 |
 | `attachments` | `id`、`user_id`、`conversation_id`、文件名、类型、大小、额度、状态、解析正文、说明及过期时间 | 私有附件元数据和所有权，原文件另存磁盘 |
 | `message_attachments` | `message_id`、`attachment_id`、`position` | 消息与附件的关联及顺序，同会话重提问时可复用 |
+| `coding_projects` | `id`、`user_id`、`name`、`source_files_json`、`warnings_json`、时间 | 当前账号导入的原始文本项目快照，不随 Agent 任务修改 |
+| `coding_tasks` | `id`、`user_id`、`project_id`、`client_task_id`、`base_task_id`、状态、指令、文件副本、步骤、检查与结果 | 独立编程任务，支持幂等提交、取消、导出和基于结果继续；删除项目级联删除任务 |
+| `local_coding_conversations` | 用户、客户端会话编号、目录显示名、标题、last_turn_index、turn_count、时间 | 一个项目的连续编程对话；不保存浏览器句柄或本地绝对路径 |
+| `local_coding_tasks` | 用户、conversation_id、turn_index、客户端任务编号、授权摘要、指令、状态、模型轮次、上下文、待执行工具、进度、截止时间 | 会话中的一次执行；会话删除时级联删除，真实文件和恢复备份留在用户设备 |
 
 一个用户可以拥有多条登录会话。浏览器保存随机会话令牌，数据库保存其 SHA-256 摘要；退出时删除对应会话，过期的会话不能继续访问聊天接口。
 
@@ -62,4 +66,12 @@ SQL 脚本是 `backend/sql/schema.sql`；Python 初始化入口和后端启动�
 .\venv\Scripts\python.exe backend\migrate_db.py --backup
 ```
 
-迁移定义位于 `backend/sql/migrations/001_email_verification.sql`（邮箱验证码）、`002_model_calls.sql`（模型调用元数据）、`003_conversation_history.sql`（聊天历史）和 `004_attachments.sql`（私有附件），当前结构版本为 4，执行器为 `backend/app/migrations.py`。字段变更、建表和版本记录处于同一事务，按顺序升级，重复启动安全；不自动降级更新版本的数据库。不要单独向旧库执行新的 schema.sql 来代替迁移。`migrate_db.py --backup` 只备份 SQLite，附件目录需另行备份。
+迁移依次为 `001_email_verification.sql`（邮箱验证码）、`002_model_calls.sql`（模型调用元数据）、`003_conversation_history.sql`（聊天历史）、`004_attachments.sql`（私有附件）、`005_rag_modes.sql`（资料模式）、`006_coding_agent.sql`（旧 ZIP 编程）、`007_local_coding.sql`（浏览器任务）、`008_local_coding_conversations.sql`（连续项目对话），位于 `backend/sql/migrations/`，当前版本为 **8**。执行器 `backend/app/migrations.py` 将字段变更、数据复制和版本记录放在同一事务中，不自动降级。迁移 008 为每个旧本地任务创建一个会话，并复制重建任务表以增加非空会话外键与轮序，保留原任务编号、内容和结果。新库直接创建完整结构。本轮只提供脚本与回归用例，未执行真实迁移。
+
+不要单独向旧库执行新 schema.sql 代替迁移，也不要删库重建。`migrate_db.py --backup` 只备份 SQLite，附件目录需另行备份；Qdrant 索引不在其中，详见 [RAG 检索与三模式使用说明](../../docs/RAG检索与三模式使用说明.md)。
+
+旧 ZIP 编程项目的 UTF-8 文件保存在 JSON 文本快照中，不创建额外数据库、不写入 Qdrant。每个任务保留修改前后两个文件集合，可据此生成 diff；不是 Git 仓库，也不会修改宿主机原项目。初版每用户最多保留 10 个项目、100 个任务，请定期导出并删除不用的项目，SQLite 备份应按敏感源码管理。
+
+默认的本地文件夹编程与上述副本模式不同：实际修改用户选中目录，原文件的恢复记录保存在当前站点的浏览器 IndexedDB，不在 SQLite。`local_coding_tasks.messages_json` 在运行期间保存发送给模型的必要源码片段及上下文；终止、取消、过期清理或重启恢复时清空该字段和待执行工具。摘要、步骤、WAL 或数据库备份仍可能含代码，不等同于安全擦除。删除任务记录不删除本地文件或浏览器备份，更多说明见 [本地文件编程与一次授权](../../docs/本地文件编程与一次授权.md)。
+
+连续编程的需求和最终结果通过任务记录长期保存，下一轮由后端从同账号、同会话读取近期文本历史。每账号最多 100 个会话、1000 轮记录，每会话最多 200 轮；删除单轮不会复用旧 turn_index。浏览器目录绑定与数据库历史独立，退出账号会清除绑定但不删除对话；删除会话不删除用户磁盘文件或本地恢复备份。

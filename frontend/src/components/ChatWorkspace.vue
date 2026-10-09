@@ -7,6 +7,7 @@ import AccountMenu from './AccountMenu.vue'
 import ConversationDialog from './ConversationDialog.vue'
 import AttachmentPicker from './AttachmentPicker.vue'
 import AttachmentCard from './AttachmentCard.vue'
+import RetrievalChoice from './RetrievalChoice.vue'
 import '../attachments.css'
 import { checkHealth } from '../api/chat.js'
 import { MAX_MESSAGE_LENGTH, useConversations } from '../composables/useConversations.js'
@@ -15,17 +16,22 @@ defineProps({
   user: { type: Object, required: true },
   signingOut: { type: Boolean, default: false },
 })
-defineEmits(['logout', 'profile-updated', 'password-changed'])
+defineEmits(['logout', 'profile-updated', 'password-changed', 'open-coding'])
 
 const {
   messages,
   draft,
+  sourceMode,
+  routeChoice,
   isLoading,
   error,
   model,
   retrySeconds,
   canSend,
   send,
+  chooseRoute,
+  cancelRouteChoice,
+  setSourceMode,
   retry,
   editFailed,
   reset,
@@ -160,6 +166,11 @@ function handleKeydown(event) {
 async function submit() {
   if (!canSend.value) return
   await send()
+  if (!routeChoice.value) focusComposer()
+}
+
+async function confirmRoute(mode) {
+  await chooseRoute(mode)
   focusComposer()
 }
 
@@ -247,6 +258,11 @@ onUnmounted(dispose)
       <button class="new-chat-button" type="button" @click="startNew">
         <AppIcon name="plus" :size="18" />
         <span>新建对话</span>
+        <span class="button-arrow">↗</span>
+      </button>
+      <button class="coding-entry" type="button" @click="sidebarOpen = false; $emit('open-coding')">
+        <span class="coding-entry-code" aria-hidden="true">&lt;/&gt;</span>
+        <span>编程工作台</span>
         <span class="button-arrow">↗</span>
       </button>
       <div class="history-heading">
@@ -508,6 +524,24 @@ onUnmounted(dispose)
 
         <div class="composer-area">
           <form class="composer" :class="{ 'is-waiting': isLoading }" @submit.prevent="submit">
+            <div class="source-mode-row" role="group" aria-label="资料使用模式">
+              <span>资料模式</span>
+              <button
+                v-for="option in [
+                  { value: 'auto', label: '自动' },
+                  { value: 'chat', label: '直接聊天' },
+                  { value: 'documents', label: '查资料' },
+                ]"
+                :key="option.value"
+                type="button"
+                :class="{ active: sourceMode === option.value }"
+                :aria-pressed="sourceMode === option.value"
+                :disabled="isLoading || opening || signingOut"
+                @click="setSourceMode(option.value)"
+              >
+                {{ option.label }}
+              </button>
+            </div>
             <div
               v-if="draftAttachments.length"
               class="attachment-drafts"
@@ -527,7 +561,9 @@ onUnmounted(dispose)
               {{ attachmentError }}
             </p>
             <p v-if="draftAttachments.length" class="attachment-hint">
-              发送时会将相关附件内容交给模型服务。文档只读取正文，不含内嵌图片；请勿上传无权分享的资料。
+              {{ sourceMode === 'chat'
+                ? '直接聊天不会读取文字文档；图片仍会交给视觉模型。'
+                : '查资料会检索文字文档片段；图片仍交给视觉模型。请勿上传无权分享的资料。' }}
             </p>
             <label class="sr-only" for="message-input">输入你的问题</label>
             <p
@@ -613,6 +649,11 @@ onUnmounted(dispose)
       @close="settingsOpen = false"
       @updated="$emit('profile-updated', $event)"
       @password-changed="$emit('password-changed', $event)"
+    />
+    <RetrievalChoice
+      v-if="routeChoice"
+      @choose="confirmRoute"
+      @cancel="cancelRouteChoice"
     />
   </div>
 </template>

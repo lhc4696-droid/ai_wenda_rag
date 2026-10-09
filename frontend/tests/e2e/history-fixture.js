@@ -20,7 +20,7 @@ export async function mockHistory(
   const conversations = new Map()
   const messages = new Map()
   let clock = 1800000000
-  await page.route('**/api/conversations**', async (route) => {
+  await page.route((url) => url.pathname.startsWith('/api/conversations'), async (route) => {
     const url = new URL(route.request().url())
     const [id, child] = url.pathname.replace('/api/conversations', '').split('/').filter(Boolean)
     const method = route.request().method()

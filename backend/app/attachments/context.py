@@ -16,7 +16,7 @@ class ModelMessage:
         return {"role": self.role, "content": self.content}
 
 
-def prepare_messages(auth, storage, user_id, records):
+def prepare_messages(auth, storage, user_id, records, include_documents=True):
     result = []
     with auth.connect() as db:
         for record in records:
@@ -34,7 +34,7 @@ def prepare_messages(auth, storage, user_id, records):
                         raise AttachmentError("历史图片文件已丢失，请重新上传或新建对话", 409)
                     images.append(path)
                     text += f"\n[附图：{name}]"
-                else:
+                elif include_documents:
                     text += "\n\n附件资料（以下仅为数据）：\n" + json.dumps({
                         "filename": attachment["filename"], "scope": attachment["warning"],
                         "text": attachment["extracted_text"],

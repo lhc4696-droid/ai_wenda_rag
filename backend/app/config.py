@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
@@ -41,6 +42,19 @@ class Settings:
     qwen_vision_model: str = ""
     attachment_max_bytes: int = 10 * 1024 * 1024
     attachment_user_quota: int = 200 * 1024 * 1024
+    rag_enabled: bool = False
+    qdrant_url: str = "http://127.0.0.1:6333"
+    qdrant_collection: str = "zhiyan_documents_v1"
+    embedding_model: str = "text-embedding-v4"
+    embedding_dimension: int = 1024
+    qwen_coding_model: str = ""
+    coding_max_steps: int = 12
+    coding_task_timeout: int = 300
+    coding_tasks_per_day: int = 20
+    coding_global_concurrency: int = 4
+    coding_sandbox_enabled: bool = False
+    coding_sandbox_image: str = "zhiyan-coding-python:1"
+    coding_check_timeout: int = 45
 
     def __post_init__(self):
         if not 5 <= self.chat_timeout <= 100:
@@ -58,6 +72,31 @@ class Settings:
             raise ValueError("ATTACHMENT_MAX_BYTES 必须在 1–10485760 之间")
         if self.attachment_user_quota < self.attachment_max_bytes + 3 * 1024 * 1024:
             raise ValueError("ATTACHMENT_USER_QUOTA 至少为单个附件上限加 3145728 字节预览预留空间")
+        if not self.embedding_model:
+            raise ValueError("EMBEDDING_MODEL 不能为空")
+        if not 64 <= self.embedding_dimension <= 4096:
+            raise ValueError("EMBEDDING_DIMENSION 必须在 64–4096 之间，并与模型实际输出一致")
+        try:
+            qdrant = urlsplit(self.qdrant_url)
+            local_qdrant = (qdrant.scheme == "http" and qdrant.hostname in {"127.0.0.1", "localhost"}
+                             and qdrant.port is not None and not qdrant.username and not qdrant.password
+                             and not qdrant.path and not qdrant.query and not qdrant.fragment)
+        except ValueError:
+            local_qdrant = False
+        if not local_qdrant:
+            raise ValueError("本地开发的 QDRANT_URL 必须是本机 HTTP 地址，例如 http://127.0.0.1:6333")
+        if not self.qdrant_collection.replace("_", "").replace("-", "").isalnum():
+            raise ValueError("QDRANT_COLLECTION 只能包含字母、数字、下划线和连字符")
+        if not 1 <= self.coding_max_steps <= 30:
+            raise ValueError("CODING_MAX_STEPS 必须在 1–30 之间")
+        if not 60 <= self.coding_task_timeout <= 900:
+            raise ValueError("CODING_TASK_TIMEOUT 必须在 60–900 秒之间")
+        if not 5 <= self.coding_check_timeout <= 120:
+            raise ValueError("CODING_CHECK_TIMEOUT 必须在 5–120 秒之间")
+        if not 1 <= self.coding_tasks_per_day <= 100 or not 1 <= self.coding_global_concurrency <= 16:
+            raise ValueError("Coding Agent 每日任务上限为 1–100，并发上限为 1–16")
+        if not self.coding_sandbox_image or self.coding_sandbox_image.startswith("-") or any(c.isspace() for c in self.coding_sandbox_image):
+            raise ValueError("CODING_SANDBOX_IMAGE 必须为有效的本地镜像名称")
 
 
 def env_int(name: str, default: int) -> int:
@@ -113,4 +152,17 @@ def get_settings() -> Settings:
         qwen_vision_model=os.getenv("QWEN_VISION_MODEL", "").strip(),
         attachment_max_bytes=env_int("ATTACHMENT_MAX_BYTES", 10 * 1024 * 1024),
         attachment_user_quota=env_int("ATTACHMENT_USER_QUOTA", 200 * 1024 * 1024),
+        rag_enabled=os.getenv("RAG_ENABLED", "true").lower() == "true",
+        qdrant_url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333").rstrip("/"),
+        qdrant_collection=os.getenv("QDRANT_COLLECTION", "zhiyan_documents_v1").strip(),
+        embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-v4").strip(),
+        embedding_dimension=env_int("EMBEDDING_DIMENSION", 1024),
+        qwen_coding_model=os.getenv("QWEN_CODING_MODEL", "").strip(),
+        coding_max_steps=env_int("CODING_MAX_STEPS", 12),
+        coding_task_timeout=env_int("CODING_TASK_TIMEOUT", 300),
+        coding_tasks_per_day=env_int("CODING_TASKS_PER_DAY", 20),
+        coding_global_concurrency=env_int("CODING_GLOBAL_CONCURRENCY", 4),
+        coding_sandbox_enabled=os.getenv("CODING_SANDBOX_ENABLED", "false").lower() == "true",
+        coding_sandbox_image=os.getenv("CODING_SANDBOX_IMAGE", "zhiyan-coding-python:1").strip(),
+        coding_check_timeout=env_int("CODING_CHECK_TIMEOUT", 45),
     )

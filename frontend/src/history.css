@@ -156,6 +156,52 @@
   color: var(--muted);
   margin-top: 7px;
 }
+.source-mode-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.source-mode-row > span { margin-right: 5px; }
+.source-mode-row button {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.source-mode-row button.active {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
+.retrieval-dialog { width: min(460px, calc(100vw - 32px)); }
+.retrieval-description { color: var(--text-secondary); font-size: 13px; line-height: 1.8; }
+.retrieval-choice-actions { display: grid; gap: 10px; margin: 20px 0 12px; }
+.retrieval-choice-button {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 13px 15px;
+  text-align: left;
+  border: 1px solid var(--border-strong);
+  border-radius: 11px;
+  background: var(--surface);
+}
+.retrieval-choice-button:hover { border-color: var(--accent); background: var(--accent-soft); }
+.retrieval-choice-button strong { font-size: 13px; }
+.retrieval-choice-button small { color: var(--muted); font-size: 11px; line-height: 1.6; }
+.retrieval-cancel { display: block; margin: 0 auto; padding: 8px; border: 0; background: none; color: var(--muted); font-size: 12px; }
+.answer-sources { margin: 14px 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-subtle); font-size: 12px; }
+.answer-sources > strong { display: block; margin-bottom: 7px; }
+.answer-sources details { margin: 5px 0; }
+.answer-sources summary { cursor: pointer; color: var(--accent-hover); }
+.answer-sources p { white-space: pre-wrap; color: var(--text-secondary); line-height: 1.7; }
+.answer-sources a { color: var(--accent-hover); }
+.message-source-mode { display: block; margin-top: 5px; font-size: 10px; color: var(--muted); }
 .conversation-date {
   overflow-wrap: anywhere;
 }

@@ -31,6 +31,7 @@ class SendMessage(BaseModel):
     expected_last_sequence: int = Field(ge=0, le=2_147_483_647)
     retry: bool = False
     attachment_ids: list[UUID] = Field(default_factory=list, max_length=3)
+    source_mode: Literal["legacy", "chat", "documents"] = "legacy"
 
     @field_validator("attachment_ids")
     @classmethod
@@ -71,6 +72,8 @@ class MessageResponse(BaseModel):
     answer_truncated: bool
     created_at: int
     attachments: list[AttachmentResponse] = Field(default_factory=list)
+    source_mode: Literal["legacy", "chat", "documents"] = "legacy"
+    sources: list[dict] = Field(default_factory=list)
 
 
 class ConversationPage(BaseModel):

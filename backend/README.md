@@ -1,6 +1,6 @@
 # 知言 AI 后端
 
-当前版本 **0.6.0**：在聊天历史基础上加入私有文档/图片附件上传、解析、消息关联、受保护下载和过期清理。图片需配置 QWEN_VISION_MODEL；文档继续使用原文字模型。说明与手动验收见 [聊天附件实现与验收](../docs/聊天附件实现与验收.md)。本轮未运行功能测试。
+当前版本 **0.9.0**：保留聊天、附件、历史与按需 RAG，编程工作台使用经用户授权的浏览器本地文件夹读写。旧 ZIP 工作台的前端和公开接口已下线，数据库记录保留。详见 [本地文件编程与一次授权](../docs/本地文件编程与一次授权.md) 和 [RAG 检索与三模式使用说明](../docs/RAG检索与三模式使用说明.md)。
 
 这是知言 AI 的 FastAPI 后端，提供邮箱验证码注册、忘记密码、登录、退出、会话校验、健康检查和多轮对话接口。
 
@@ -53,8 +53,8 @@ Copy-Item backend/.env.example backend/.env
 | `GET /api/conversations/{id}/messages` | 按 limit、before 读取消息，默认最近 50 条 |
 | `PATCH /api/conversations/{id}` | 提交 title 重命名 |
 | `DELETE /api/conversations/{id}` | 确认后删除会话及全部消息，成功 204 |
-| `POST /api/conversations/{id}/messages` | content、client_message_id、expected_last_sequence、retry、可选 attachment_ids；由后端读取上下文并保存问答 |
-| `GET /api/attachments/capabilities` | 附件类型、大小限制、图片能力配置 |
+| `POST /api/conversations/{id}/messages` | content、client_message_id、expected_last_sequence、retry、可选 attachment_ids 与 source_mode（chat/documents；旧客户端省略时为 legacy）；由后端读取上下文并保存问答及检索来源 |
+| `GET /api/attachments/capabilities` | 附件类型、大小限制、图片与 RAG 能力配置 |
 | `POST /api/attachments` | multipart/form-data，单个 file；上传并解析，返回 ready 或 failed 状态 |
 | `GET /api/attachments/{id}` | 查询自己的附件信息 |
 | `GET /api/attachments/{id}/content` | 受保护的图片预览或文档下载 |
@@ -93,7 +93,7 @@ Copy-Item backend/.env.example backend/.env
 
 ## 6. 数据库与 SQL
 
-默认 SQLite 文件为 `backend/data/zhiyan.sqlite3`，启动时自动创建或迁移到版本 4。建表脚本为 `backend/sql/schema.sql`，包含 `users`、`sessions`、`auth_attempts`、`email_verifications`、`schema_migrations`、`model_calls`、`conversations`、`messages`、`attachments`、`message_attachments`；结构解释见 [数据库说明](D:/code/project_python/wen_da/backend/sql/README.md)。升级前推荐运行 `backend/migrate_db.py --backup` 备份数据库；附件目录应另外一起备份。也可手动初始化：
+默认 SQLite 文件为 `backend/data/zhiyan.sqlite3`，启动时自动创建或迁移到版本 8。建表脚本为 `backend/sql/schema.sql`；`coding_projects`、`coding_tasks` 保存旧 ZIP 副本，`local_coding_conversations` 保存本地项目对话，`local_coding_tasks` 保存各轮调度状态与结果。升级前停止后端并运行 `backend/migrate_db.py --backup` 备份迁移；附件目录应另外备份。结构解释见 [数据库说明](sql/README.md)。也可手动初始化：
 
 ```powershell
 .\venv\Scripts\python.exe backend\init_db.py
@@ -110,3 +110,17 @@ SESSION_COOKIE_SECURE=false
 `SESSION_COOKIE_SECURE=false` 用于本地 HTTP。正式 HTTPS 部署时改成 `true`，并将实际前端来源加入 `CORS_ORIGINS`。使用本地构建预览时，也需加入其来源 `http://127.0.0.1:4173`；修改配置后重启后端。
 
 密码采用独立随机盐和 PBKDF2-HMAC-SHA256（600,000 次迭代），会话采用服务端随机令牌；接口检查 Origin/Referer，参数校验失败不会回显密码。依据：[OWASP 密码存储](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)、[OWASP 会话管理](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)。
+
+## 7. Coding Agent 编程工作台
+
+登录后打开「编程工作台」，首次确认会话授权并通过浏览器选择目录。此后在同一对话连续发送需求，复用仍有效的目录绑定，不再每轮弹窗。模型提出工具请求，浏览器读写所选目录，后端不访问用户绝对路径。停止仅结束本轮；主动断开、浏览器权限失效或退出后再次进入时，需要重新连接。刷新只恢复历史和仍获许可的绑定，不重跑任务。
+
+本地模式支持读取、搜索、新建和精确修改，附带冲突检查、修改前后对照和浏览器本地恢复记录。不运行命令、不自动测试、不需要 Docker。使用支持 File System Access 的桌面浏览器和 HTTPS/localhost；接口前缀 `/api/coding/local/tasks`。完整使用、安全边界与手动验收见 [本地文件编程与一次授权](../docs/本地文件编程与一次授权.md)。
+
+旧 ZIP 工作台的导入、执行与导出接口已移除，旧任务和源码副本仍保存在 SQLite，启动时仅将未结束的旧任务标记为已中断。没有删除旧表，也没有新增数据库迁移。
+
+`QWEN_CODING_MODEL` 未填写时沿用 `QWEN_MODEL`，共用 `DASHSCOPE_API_KEY`；模型必须支持 DashScope 文本 Function Calling。每轮调用均计入现有模型调用额度。本地接口在 `/api/coding/local`，`GET /capabilities` 提供模型与轮次限制，完整参数见 `/docs`。
+
+本地模式没有命令执行或代码检查工具，Docker 配置不会为本地模式启用这些能力。部分共用后端模块和旧沙箱源码暂时保留，以免下线旧产品入口时破坏现有模型调度与额度保护。当前只支持单个后端实例、单个 Uvicorn worker。
+
+会话接口为 `/api/coding/local/conversations`（创建、列表、详情、删除），任务创建必须带 `conversation_id`。后端只使用当前账号、当前会话最近最多 12 个已结束轮次的需求与结果，历史正文预算约 18000 字符，不复用旧工具或源码读取基线。每轮仍有独立的额度、截止时间、令牌与恢复记录。迁移 008 将旧任务各自保留为独立会话，本轮未执行真实迁移或功能测试。使用步骤见 [本地文件编程与项目会话授权](../docs/本地文件编程与一次授权.md)；[原 ZIP 说明](../docs/CodingAgent使用与部署说明.md) 仅为历史归档。
