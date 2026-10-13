@@ -11,6 +11,10 @@ from app.auth.store import AuthStore
 from app.config import Settings, get_settings
 from app.schemas import ChatRequest, ChatResponse, ErrorResponse, HealthResponse
 from app.integrations.llm import DashScopeLLM, LLMError, LLMProvider
+from app.integrations.compatible import OpenAICompatibleLLM
+from app.model_settings.store import ModelSettingsStore
+from app.model_settings.schemas import ModelSettingsError
+from app.model_settings.routes import router as model_settings_router
 from app.integrations.email import SMTPMailer
 from app.auth.schemas import UserResponse
 from app.chat.service import ChatService
@@ -31,19 +35,27 @@ from app.coding.local_store import LocalCodingStore
 from app.coding.local_service import LocalCodingService
 
 
-def get_llm_provider(settings: Settings = Depends(get_app_settings)) -> LLMProvider:
-    return DashScopeLLM(settings)
+def get_llm_provider(request: Request, user: UserResponse = Depends(require_user),
+                     settings: Settings = Depends(get_app_settings)) -> LLMProvider:
+    # 每次请求独立快照，不能修改共享 Settings 或全局 SDK 的 key/base_url。
+    profile = request.app.state.model_settings.resolve(user.id)
+    if profile:
+        return OpenAICompatibleLLM(settings, profile)
+    else:
+        # 使用默认的 DashScope LLM
+        return DashScopeLLM(settings)
 
 
 def create_app(config: Settings | None = None) -> FastAPI:
     settings = config or get_settings()
     store = AuthStore(settings.auth_db_path)
+    model_settings = ModelSettingsStore(store, settings)
     model_calls = ModelCallStore(store)
     chat_service = ChatService(model_calls, settings)
-    attachments = AttachmentService(store, settings)
+    attachments = AttachmentService(store, settings, model_settings)
     rag = RagService(store, settings)
     attachments.rag = rag
-    local_coding = LocalCodingService(LocalCodingStore(store), model_calls, settings)
+    local_coding = LocalCodingService(LocalCodingStore(store), model_calls, settings, model_settings)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
@@ -60,9 +72,10 @@ def create_app(config: Settings | None = None) -> FastAPI:
             cleaner.cancel()
             await asyncio.gather(cleaner, return_exceptions=True)
 
-    application = FastAPI(title="知言 AI API", description="账号、聊天历史、私有附件、按需 RAG 与本地文件编程。登录使用 HttpOnly Cookie。", version="0.9.0", lifespan=lifespan)
+    application = FastAPI(title="知言 AI API", description="账号、个人模型配置、聊天历史、私有附件、按需 RAG 与本地文件编程。登录使用 HttpOnly Cookie。", version="0.10.0", lifespan=lifespan)
     application.state.settings = settings
     application.state.auth_store = store
+    application.state.model_settings = model_settings
     application.state.mailer = SMTPMailer(settings)
     application.state.model_calls = model_calls
     application.state.conversations = ConversationStore(store)
@@ -76,11 +89,13 @@ def create_app(config: Settings | None = None) -> FastAPI:
         expose_headers=["X-Request-ID", "X-Error-Code", "Retry-After"],
     )
     application.include_router(auth_router)
+    application.include_router(model_settings_router)
     application.include_router(attachment_router)
     application.include_router(local_coding_router)
     application.include_router(conversation_router(get_llm_provider))
 
     @application.exception_handler(AttachmentError)
+    @application.exception_handler(ModelSettingsError)
     @application.exception_handler(CodingError)
     @application.exception_handler(HistoryError)
     async def history_error(request: Request, exc: HistoryError):

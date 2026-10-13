@@ -1,6 +1,6 @@
 # 知言 AI 后端
 
-当前版本 **0.9.0**：保留聊天、附件、历史与按需 RAG，编程工作台使用经用户授权的浏览器本地文件夹读写。旧 ZIP 工作台的前端和公开接口已下线，数据库记录保留。详见 [本地文件编程与一次授权](../docs/本地文件编程与一次授权.md) 和 [RAG 检索与三模式使用说明](../docs/RAG检索与三模式使用说明.md)。
+当前版本 **0.10.0**：支持每个账号自带模型 API Key 和 Base URL，覆盖聊天、RAG 回答与 Coding；Embedding 保持项目配置。编程工作台使用经用户授权的浏览器本地文件夹读写。旧 ZIP 工作台的前端和公开接口已下线，数据库记录保留。详见 [用户自定义模型配置](../docs/用户自定义模型配置.md)、[本地文件编程与一次授权](../docs/本地文件编程与一次授权.md) 和 [RAG 检索与三模式使用说明](../docs/RAG检索与三模式使用说明.md)。
 
 这是知言 AI 的 FastAPI 后端，提供邮箱验证码注册、忘记密码、登录、退出、会话校验、健康检查和多轮对话接口。
 
@@ -16,6 +16,8 @@ Copy-Item backend/.env.example backend/.env
 
 然后编辑 `backend/.env`，填入真实的 `DASHSCOPE_API_KEY`。真实 `.env` 已被 `.gitignore` 排除。
 
+如需允许用户保存自己的模型 Key，安装更新后的依赖并按 [个人模型配置说明](../docs/用户自定义模型配置.md) 生成专用 `MODEL_CONFIG_SECRET`。未配置时默认模型仍可用；不要重复生成或覆盖已有加密密钥，也不要复用邮箱验证码密钥。
+
 ## 2. 安装依赖
 
 ```powershell
@@ -23,6 +25,8 @@ Copy-Item backend/.env.example backend/.env
 ```
 
 ## 3. 启动
+
+自定义模型在 Clash Verge / TUN / Fake-IP 环境下被地址检查拦截时，可配置本机 HTTP/Mixed 代理及精确 Base URL 白名单。参见 [代理配置与安全边界](../docs/Clash-Verge与自定义模型代理配置.md)；这项改动不需要新增依赖或迁移数据库，也不会修改默认百炼及 Embedding 的网络配置。
 
 ```powershell
 .\venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --reload
@@ -48,6 +52,10 @@ Copy-Item backend/.env.example backend/.env
 | `POST /api/auth/username` | 登录后只提交 username，更新自己的登录用户名并保留现有会话；保留来源校验、频率限制和重名检查 |
 | `POST /api/auth/password/change` | 登录后提交 current_password、new_password；原子撤销旧会话并换发当前浏览器的 HttpOnly Cookie，当前浏览器保持登录，其他登录失效 |
 | `GET /api/chat/usage` | 当前用户今日调用次数、已知用量及额度重置时间 |
+| `GET /api/model-settings` | 当前账号的默认/个人模型元数据和安全存储状态，永不返回 API Key |
+| `PATCH /api/model-settings` | 保存自己的 Base URL、Key、聊天/Coding/可选视觉模型，或 enabled:false 切回默认；执行中返回 409 |
+| `DELETE /api/model-settings` | 删除当前账号个人模型配置，返回默认元数据 |
+| `POST /api/model-settings/test` | 用当前表单配置进行一次聊天或 Coding 工具格式检查；不保存配置、不读历史，可能产生费用且计入调用额度；响应的 ok 表示测试是否通过 |
 | `POST /api/conversations` | 新建会话，客户端 UUID id 可用于重试同一次创建 |
 | `GET /api/conversations` | 按 limit、cursor 分页读取自己的会话 |
 | `GET /api/conversations/{id}/messages` | 按 limit、before 读取消息，默认最近 50 条 |
@@ -93,7 +101,7 @@ Copy-Item backend/.env.example backend/.env
 
 ## 6. 数据库与 SQL
 
-默认 SQLite 文件为 `backend/data/zhiyan.sqlite3`，启动时自动创建或迁移到版本 8。建表脚本为 `backend/sql/schema.sql`；`coding_projects`、`coding_tasks` 保存旧 ZIP 副本，`local_coding_conversations` 保存本地项目对话，`local_coding_tasks` 保存各轮调度状态与结果。升级前停止后端并运行 `backend/migrate_db.py --backup` 备份迁移；附件目录应另外备份。结构解释见 [数据库说明](sql/README.md)。也可手动初始化：
+默认 SQLite 文件为 `backend/data/zhiyan.sqlite3`，启动时自动创建或迁移到版本 11。建表脚本为 `backend/sql/schema.sql`；`coding_projects`、`coding_tasks` 保存旧 ZIP 副本，`local_coding_projects` 保存本地项目及名称，`local_coding_project_numbers` 保存每个账号的默认名称编号，`local_coding_conversations` 保存项目下的独立对话，`local_coding_tasks` 保存各轮调度状态与结果，`user_model_settings` 保存个人模型地址、名称与加密 Key。升级前停止后端并运行 `backend/migrate_db.py --backup` 备份迁移；附件目录应另外备份，模型加密密钥应另行安全保管。结构解释见 [数据库说明](sql/README.md)；项目升级见 [项目目录与多对话](../docs/项目目录与多对话.md)。也可手动初始化：
 
 ```powershell
 .\venv\Scripts\python.exe backend\init_db.py

@@ -5,6 +5,20 @@ const path = (id) => `${base}/${encodeURIComponent(id)}`
 const conversations = '/api/coding/local/conversations'
 const conversationPath = (id) => `${conversations}/${encodeURIComponent(id)}`
 export const localCodingApi = {
+  listProjects: (signal) => requestJson('/api/coding/local/projects', { signal }),
+  createProject: (body, signal) =>
+    requestJson('/api/coding/local/projects', { method: 'POST', body, signal }),
+  renameProject: (id, body, signal) =>
+    requestJson(`/api/coding/local/projects/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body,
+      signal,
+    }),
+  removeProject: (id, signal) =>
+    requestJson(`/api/coding/local/projects/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      signal,
+    }),
   listConversations: (signal) => requestJson(conversations, { signal }),
   createConversation: (body, signal) =>
     requestJson(conversations, { method: 'POST', body, signal }),

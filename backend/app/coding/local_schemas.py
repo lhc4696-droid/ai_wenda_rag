@@ -89,9 +89,52 @@ class LocalTaskList(BaseModel):
     items: list[LocalTaskResponse]
 
 
+class LocalProjectName(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(default="", max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def clean_name(cls, value):
+        value = value.strip()
+        if any(ord(char) < 32 or ord(char) == 127 for char in value):
+            raise ValueError("项目名称不能包含控制字符或换行")
+        if value:
+            return CreateTask.nonblank(value)
+        return ""
+
+
+class LocalProjectRename(LocalProjectName):
+    name: str = Field(max_length=120)
+
+
+class LocalProjectCreate(LocalProjectName):
+    client_project_id: UUID
+    directory_name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("directory_name")
+    @classmethod
+    def nonblank(cls, value):
+        return CreateTask.nonblank(value)
+
+
+class LocalProjectResponse(BaseModel):
+    id: str
+    name: str
+    directory_name: str
+    created_at: int
+    updated_at: int
+
+
+class LocalProjectList(BaseModel):
+    items: list[LocalProjectResponse]
+
+
 class LocalConversationCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     client_conversation_id: UUID
+    # Optional only for older clients: they receive a separate project automatically.
+    project_id: UUID | None = None
     directory_name: str = Field(min_length=1, max_length=120)
 
     @field_validator("directory_name")
@@ -102,6 +145,7 @@ class LocalConversationCreate(BaseModel):
 
 class LocalConversationResponse(BaseModel):
     id: str
+    project_id: str
     directory_name: str
     title: str
     created_at: int

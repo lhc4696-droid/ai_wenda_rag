@@ -6,6 +6,9 @@ const props = defineProps({
   user: { type: Object, required: true },
   settingsDisabled: { type: Boolean, default: false },
   signingOut: { type: Boolean, default: false },
+  menuId: { type: String, default: 'account-dropdown' },
+  showModelSettings: { type: Boolean, default: false },
+  settingsDisabledHint: { type: String, default: '回答完成后可修改账号' },
 })
 const emit = defineEmits(['settings', 'logout'])
 const root = ref(null)
@@ -135,7 +138,7 @@ onUnmounted(() => {
       :class="{ 'is-open': open }"
       :aria-label="`账号菜单：${user.username}`"
       :aria-expanded="open"
-      aria-controls="account-dropdown"
+      :aria-controls="menuId"
       :disabled="signingOut"
       @click="toggle"
     >
@@ -143,7 +146,7 @@ onUnmounted(() => {
       <span class="profile-name" :title="user.username">{{ user.username }}</span>
       <AppIcon class="account-chevron" name="chevron-down" :size="15" />
     </button>
-    <div v-if="open" id="account-dropdown" class="account-dropdown-wrap">
+    <div v-if="open" :id="menuId" class="account-dropdown-wrap">
       <div ref="panel" class="account-dropdown" role="group" aria-label="账号菜单">
         <div class="account-dropdown-heading">我的账号</div>
         <button
@@ -155,7 +158,17 @@ onUnmounted(() => {
           <AppIcon name="user" :size="18" />
           <span>账号设置</span>
         </button>
-        <p v-if="settingsDisabled" class="account-menu-hint">回答完成后可修改账号</p>
+        <button
+          v-if="showModelSettings"
+          type="button"
+          class="account-menu-item"
+          :disabled="settingsDisabled || signingOut"
+          @click="selectSettings('models')"
+        >
+          <AppIcon name="spark" :size="18" />
+          <span>模型设置</span>
+        </button>
+        <p v-if="settingsDisabled" class="account-menu-hint">{{ settingsDisabledHint }}</p>
         <div class="account-menu-divider"></div>
         <button
           type="button"

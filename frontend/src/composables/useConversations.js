@@ -40,6 +40,9 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
   const retrySeconds = ref(0)
   const model = computed(
     () =>
+      (draftAttachments.value.some((item) => item.kind === 'image')
+        ? attachmentCapabilities.value?.vision_model
+        : attachmentCapabilities.value?.chat_model) ||
       [...messages.value].reverse().find((message) => message.role === 'assistant')?.model || '',
   )
   const hasPriorDocuments = computed(() =>
@@ -76,13 +79,15 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
   const deleted = new Set()
   const uploads = new Map()
   const capabilityController = new AbortController()
+  let capabilityRevision = 0
 
   async function loadCapabilities() {
+    const revision = ++capabilityRevision
     try {
       const value = await filesApi.capabilities(capabilityController.signal)
-      if (alive) attachmentCapabilities.value = value
+      if (alive && revision === capabilityRevision) attachmentCapabilities.value = value
     } catch (cause) {
-      if (alive) attachmentError.value = '暂时无法读取附件能力，可刷新页面重试；文字聊天不受影响。'
+      if (alive && revision === capabilityRevision) attachmentError.value = '暂时无法读取模型与附件能力，可刷新页面重试。'
     }
   }
 
@@ -114,7 +119,7 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
         continue
       }
       if (kind === 'image' && !attachmentCapabilities.value.images_enabled) {
-        attachmentError.value = '图片功能尚未启用，请先在后端配置视觉模型 QWEN_VISION_MODEL。'
+        attachmentError.value = '当前模型尚未启用图片能力：自定义模型请在账号设置填写视觉模型；默认模型请联系维护者配置。'
         continue
       }
       const localId = crypto.randomUUID()
@@ -596,6 +601,7 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
     attachmentCapabilities,
     attachmentError,
     attachmentBusy,
+    loadCapabilities,
     addFiles,
     removeAttachment,
     retrySeconds,

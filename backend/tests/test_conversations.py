@@ -164,7 +164,7 @@ def test_v2_migration_preserves_accounts_and_is_repeatable(tmp_path):
     initialize_database(path)
     with sqlite3.connect(path) as db:
         assert db.execute("SELECT username FROM users").fetchone()[0] == "preserved"
-        assert db.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall() == [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,)]
+        assert db.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall() == [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,), (9,), (10,), (11,)]
         assert {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")} >= {"messages", "conversations"}
 
 

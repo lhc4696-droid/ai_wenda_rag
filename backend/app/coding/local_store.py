@@ -28,8 +28,12 @@ def public_local(task):
 
 def public_conversation(conversation):
     return {key: conversation[key] for key in (
-        "id", "directory_name", "title", "created_at", "updated_at", "turn_count",
+        "id", "project_id", "directory_name", "title", "created_at", "updated_at", "turn_count",
     )}
+
+
+def public_project(project):
+    return {key: project[key] for key in ("id", "name", "directory_name", "created_at", "updated_at")}
 
 
 def historical_messages(rows):
@@ -61,6 +65,73 @@ class LocalCodingStore:
         self.auth = auth
 
     @staticmethod
+    def _project(db, owner, identifier):
+        row = db.execute("SELECT * FROM local_coding_projects WHERE id=? AND user_id=?", (identifier, owner)).fetchone()
+        if row is None:
+            raise CodingError("编程项目不存在或无法访问", "LOCAL_PROJECT_NOT_FOUND", 404)
+        return dict(row)
+
+    @staticmethod
+    def _default_project_name(db, owner):
+        # Called inside BEGIN IMMEDIATE: two tabs cannot allocate the same number.
+        db.execute("INSERT OR IGNORE INTO local_coding_project_numbers(user_id,last_number) VALUES(?,0)", (owner,))
+        number = db.execute("SELECT last_number FROM local_coding_project_numbers WHERE user_id=?", (owner,)).fetchone()[0]
+        while True:
+            number += 1
+            name = f"项目 {number}"
+            if not db.execute("SELECT 1 FROM local_coding_projects WHERE user_id=? AND name=?", (owner, name)).fetchone():
+                break
+        db.execute("UPDATE local_coding_project_numbers SET last_number=? WHERE user_id=?", (number, owner))
+        return name
+
+    @classmethod
+    def _insert_project(cls, db, owner, identifier, client_id, directory_name, now, name=""):
+        if db.execute("SELECT count(*) FROM local_coding_projects WHERE user_id=?", (owner,)).fetchone()[0] >= 100:
+            raise CodingError("已保留 100 个编程项目，请删除不需要的项目记录", "LOCAL_PROJECT_LIMIT", 409)
+        display_name = name or cls._default_project_name(db, owner)
+        db.execute("""INSERT INTO local_coding_projects
+            (id,user_id,client_project_id,directory_name,name,name_request,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)""",
+            (identifier, owner, client_id, directory_name, display_name, name, now, now))
+
+    def create_project(self, owner, data):
+        with self.auth.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute("SELECT * FROM local_coding_projects WHERE user_id=? AND client_project_id=?",
+                                  (owner, data.client_project_id.hex)).fetchone()
+            if existing:
+                if existing["directory_name"] != data.directory_name or existing["name_request"] != data.name:
+                    raise CodingError("项目编号已用于另一个创建请求", "LOCAL_REPLAY_CONFLICT", 409)
+                return public_project(existing)
+            identifier = uuid4().hex
+            self._insert_project(db, owner, identifier, data.client_project_id.hex, data.directory_name, int(time.time()), data.name)
+            return public_project(self._project(db, owner, identifier))
+
+    def rename_project(self, owner, identifier, data):
+        with self.auth.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._project(db, owner, identifier)
+            name = data.name or self._default_project_name(db, owner)
+            db.execute("UPDATE local_coding_projects SET name=?,updated_at=? WHERE id=? AND user_id=?",
+                       (name, int(time.time()), identifier, owner))
+            return public_project(self._project(db, owner, identifier))
+
+    def list_projects(self, owner):
+        with self.auth.connect() as db:
+            return [public_project(row) for row in db.execute(
+                "SELECT * FROM local_coding_projects WHERE user_id=? ORDER BY updated_at DESC,id DESC LIMIT 100", (owner,))]
+
+    def remove_project(self, owner, identifier):
+        with self.auth.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._expire(db)
+            self._project(db, owner, identifier)
+            if db.execute(f"""SELECT 1 FROM local_coding_tasks t
+                JOIN local_coding_conversations c ON c.id=t.conversation_id
+                WHERE c.project_id=? AND t.user_id=? AND t.status IN {ACTIVE}""", (identifier, owner)).fetchone():
+                raise CodingError("请先停止项目中的执行任务", "LOCAL_BUSY", 409)
+            db.execute("DELETE FROM local_coding_projects WHERE id=? AND user_id=?", (identifier, owner))
+
+    @staticmethod
     def _conversation(db, owner, identifier):
         row = db.execute("SELECT * FROM local_coding_conversations WHERE id=? AND user_id=?", (identifier, owner)).fetchone()
         if row is None:
@@ -74,15 +145,26 @@ class LocalCodingStore:
             existing = db.execute("SELECT * FROM local_coding_conversations WHERE user_id=? AND client_conversation_id=?",
                                   (owner, data.client_conversation_id.hex)).fetchone()
             if existing:
-                if existing["directory_name"] != data.directory_name:
+                if (existing["directory_name"] != data.directory_name
+                        or (data.project_id and existing["project_id"] != data.project_id.hex)):
                     raise CodingError("会话编号已经绑定另一个目录", "LOCAL_REPLAY_CONFLICT", 409)
                 return public_conversation(existing)
             if db.execute("SELECT count(*) FROM local_coding_conversations WHERE user_id=?", (owner,)).fetchone()[0] >= 100:
                 raise CodingError("已保留 100 个编程会话，请删除不需要的会话记录", "LOCAL_CONVERSATION_LIMIT", 409)
+            if data.project_id:
+                project = self._project(db, owner, data.project_id.hex)
+                if project["directory_name"] != data.directory_name:
+                    raise CodingError("目录名称与项目不一致", "LOCAL_DIRECTORY_MISMATCH", 409)
+                project_id = project["id"]
+            else:
+                # Compatibility: keep the old conversation-keyed browser handle usable.
+                project_id = identifier
+                self._insert_project(db, owner, project_id, project_id, data.directory_name, now)
             db.execute("""INSERT INTO local_coding_conversations
-                (id,user_id,client_conversation_id,directory_name,title,created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?)""", (identifier, owner, data.client_conversation_id.hex, data.directory_name,
+                (id,user_id,project_id,client_conversation_id,directory_name,title,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?)""", (identifier, owner, project_id, data.client_conversation_id.hex, data.directory_name,
                                            "新的编程对话", now, now))
+            db.execute("UPDATE local_coding_projects SET updated_at=? WHERE id=? AND user_id=?", (now, project_id, owner))
             return public_conversation(self._conversation(db, owner, identifier))
 
     def list_conversations(self, owner):
@@ -183,6 +265,7 @@ class LocalCodingStore:
             title = data.instruction[:80] if conversation["last_turn_index"] == 0 else conversation["title"]
             db.execute("UPDATE local_coding_conversations SET last_turn_index=?,turn_count=turn_count+1,title=?,updated_at=? WHERE id=? AND user_id=?",
                        (turn_index, title, now, conversation["id"], owner))
+            db.execute("UPDATE local_coding_projects SET updated_at=? WHERE id=? AND user_id=?", (now, conversation["project_id"], owner))
             return self._owned(db, owner, identifier)
 
     def claim(self, owner, identifier, max_steps):

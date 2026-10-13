@@ -6,8 +6,8 @@ import time
 
 
 SQL_DIR = Path(__file__).resolve().parents[1] / "sql"
-MIGRATIONS = ((2, "002_model_calls.sql"), (3, "003_conversation_history.sql"), (4, "004_attachments.sql"), (5, "005_rag_modes.sql"), (6, "006_coding_agent.sql"), (7, "007_local_coding.sql"), (8, "008_local_coding_conversations.sql"))
-CURRENT_VERSION = 8
+MIGRATIONS = ((2, "002_model_calls.sql"), (3, "003_conversation_history.sql"), (4, "004_attachments.sql"), (5, "005_rag_modes.sql"), (6, "006_coding_agent.sql"), (7, "007_local_coding.sql"), (8, "008_local_coding_conversations.sql"), (9, "009_user_model_settings.sql"), (10, "010_local_coding_projects.sql"), (11, "011_local_project_names.sql"), (12, "012_model_max_output_tokens.sql"))
+CURRENT_VERSION = 12
 
 
 def execute_statements(connection: sqlite3.Connection, source: str):
@@ -63,6 +63,22 @@ def initialize_database(path: Path):
                         elif task_columns & {"conversation_id", "turn_index"}:
                             raise RuntimeError("编程会话结构不完整，请先备份数据库并检查迁移状态")
                         else:
+                            execute_statements(connection, (SQL_DIR / "migrations" / filename).read_text(encoding="utf-8"))
+                    elif version == 10:
+                        columns = {row[1] for row in connection.execute("PRAGMA table_info(local_coding_conversations)")}
+                        if "project_id" not in columns:
+                            execute_statements(connection, (SQL_DIR / "migrations" / filename).read_text(encoding="utf-8"))
+                    elif version == 11:
+                        columns = {row[1] for row in connection.execute("PRAGMA table_info(local_coding_projects)")}
+                        if {"name", "name_request"}.issubset(columns):
+                            pass
+                        elif columns & {"name", "name_request"}:
+                            raise RuntimeError("项目名称字段不完整，请先备份数据库并检查迁移状态")
+                        else:
+                            execute_statements(connection, (SQL_DIR / "migrations" / filename).read_text(encoding="utf-8"))
+                    elif version == 12:
+                        columns = {row[1] for row in connection.execute("PRAGMA table_info(user_model_settings)")}
+                        if "max_output_tokens" not in columns:
                             execute_statements(connection, (SQL_DIR / "migrations" / filename).read_text(encoding="utf-8"))
                     else:
                         execute_statements(connection, (SQL_DIR / "migrations" / filename).read_text(encoding="utf-8"))

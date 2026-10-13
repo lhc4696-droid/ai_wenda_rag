@@ -1,9 +1,12 @@
-// Directory capabilities stay in this browser; the server only knows a conversation ID.
+// Directory capabilities are keyed by (owner, project ID), never by the active conversation.
+// The persisted keyPath stays "conversationId" for compatibility with IndexedDB v1.
+// Schema v10 gives every legacy project the old conversation ID, so no capability is
+// copied, merged by folder name, or silently re-authorized during the upgrade.
 // Restoring a remembered handle checks permission, but never requests it or starts a task.
-function identity(owner, conversationId) {
+function identity(owner, projectId) {
   if (!Number.isSafeInteger(owner) || owner <= 0) throw new Error('目录绑定缺少有效账号。')
-  const id = String(conversationId).replaceAll('-', '').toLowerCase()
-  if (!/^[a-f0-9]{32}$/.test(id)) throw new Error('目录绑定缺少有效会话。')
+  const id = String(projectId).replaceAll('-', '').toLowerCase()
+  if (!/^[a-f0-9]{32}$/.test(id)) throw new Error('目录绑定缺少有效项目。')
   return { owner, conversationId: id }
 }
 
@@ -70,18 +73,68 @@ const browserStorage = {
 // Serialize changes across tabs so two connections cannot silently replace each other's root.
 const browserLock = (action) => navigator.locks.request('zhiyan-coding-bindings', action)
 
+// Call directly from a user click, before awaiting storage, locks or network.
+// This requests browser permission only; it never enables an app binding by itself.
+export function requestCodingDirectoryPermission(handle) {
+  directory(handle)
+  if (typeof handle.requestPermission !== 'function')
+    throw new Error('当前浏览器无法恢复目录授权，请重新选择原目录。')
+  return handle.requestPermission({ mode: 'readwrite' })
+}
+
 export function createCodingBindings(storage, lock = (action) => action()) {
   return {
-    async get(owner, conversationId) {
-      const key = identity(owner, conversationId)
+    async prepareReconnect(owner, projectId) {
+      const key = identity(owner, projectId)
+      return lock(async () => {
+        const row = await storage.read(key)
+        if (!row) return null
+        try {
+          directory(row.handle)
+          if (typeof row.handle.requestPermission !== 'function') return null
+        } catch {
+          return null
+        }
+        // A candidate is NOT an authorized execution handle. Only the explicit button
+        // may request permission, then commit this snapshot if it is still current.
+        return { ...key, handle: row.handle, revision: row.revision ?? row.updatedAt }
+      })
+    },
+    async reconnect(owner, projectId, candidate) {
+      const key = identity(owner, projectId)
+      return lock(async () => {
+        const row = await storage.read(key)
+        if (
+          !candidate ||
+          candidate.owner !== owner ||
+          candidate.conversationId !== key.conversationId ||
+          !row ||
+          (row.revision ?? row.updatedAt) !== candidate.revision
+        )
+          throw new Error('目录记录已变化或已清除，请关闭提示后重新连接。')
+        if (!(await directory(row.handle).isSameEntry(directory(candidate.handle))))
+          throw new Error('保存的目录与本次授权不匹配，未恢复访问。')
+        if (!(await granted(candidate.handle)))
+          throw new Error('浏览器尚未允许目录读写，未执行文件操作。')
+        await storage.put({
+          ...row,
+          enabled: true,
+          revision: crypto.randomUUID(),
+          updatedAt: Date.now(),
+        })
+        return candidate.handle
+      })
+    },
+    async get(owner, projectId) {
+      const key = identity(owner, projectId)
       return lock(async () => {
         const row = await storage.read(key)
         if (!row?.enabled || !(await granted(row.handle))) return null
         return row.handle
       })
     },
-    async save(owner, conversationId, handle) {
-      const key = identity(owner, conversationId)
+    async save(owner, projectId, handle) {
+      const key = identity(owner, projectId)
       directory(handle)
       return lock(async () => {
         if (!(await granted(handle))) throw new Error('文件夹读写权限尚未批准，请重新连接原目录。')
@@ -91,26 +144,38 @@ export function createCodingBindings(storage, lock = (action) => action()) {
           try {
             same = await directory(previous.handle).isSameEntry(handle)
           } catch {
-            throw new Error('无法核对原目录，请新建编程对话，不要将旧对话直接连接到其它项目。')
+            throw new Error('无法核对原目录，请添加新项目，不要将已有项目连接到其它目录。')
           }
           if (!same)
             throw new Error(
-              '所选文件夹不是这个对话原先绑定的目录。请选择原目录；另一个项目请新建对话。',
+              '所选文件夹不是这个项目原先绑定的目录。请选择原目录；另一个目录请添加新项目。',
             )
         }
-        await storage.put({ ...key, handle, enabled: true, updatedAt: Date.now() })
+        await storage.put({
+          ...key,
+          handle,
+          enabled: true,
+          revision: crypto.randomUUID(),
+          updatedAt: Date.now(),
+        })
       })
     },
-    async forget(owner, conversationId) {
-      const key = identity(owner, conversationId)
+    async forget(owner, projectId) {
+      const key = identity(owner, projectId)
       return lock(async () => {
         const row = await storage.read(key)
         // Keep identity for a future explicit reconnect, but never return this handle as authorized.
-        if (row) await storage.put({ ...row, enabled: false, updatedAt: Date.now() })
+        if (row)
+          await storage.put({
+            ...row,
+            enabled: false,
+            revision: crypto.randomUUID(),
+            updatedAt: Date.now(),
+          })
       })
     },
-    async remove(owner, conversationId) {
-      const key = identity(owner, conversationId)
+    async remove(owner, projectId) {
+      const key = identity(owner, projectId)
       return lock(() => storage.remove(key))
     },
     async forgetOwner(owner) {
@@ -125,9 +190,12 @@ export function createCodingBindings(storage, lock = (action) => action()) {
 }
 
 const bindings = createCodingBindings(browserStorage, browserLock)
-export const getCodingBinding = (owner, conversationId) => bindings.get(owner, conversationId)
-export const saveCodingBinding = (owner, conversationId, root) =>
-  bindings.save(owner, conversationId, root)
-export const forgetCodingBinding = (owner, conversationId) => bindings.forget(owner, conversationId)
-export const deleteCodingBinding = (owner, conversationId) => bindings.remove(owner, conversationId)
+export const getCodingBinding = (owner, projectId) => bindings.get(owner, projectId)
+export const prepareCodingReconnect = (owner, projectId) =>
+  bindings.prepareReconnect(owner, projectId)
+export const reconnectCodingBinding = (owner, projectId, candidate) =>
+  bindings.reconnect(owner, projectId, candidate)
+export const saveCodingBinding = (owner, projectId, root) => bindings.save(owner, projectId, root)
+export const forgetCodingBinding = (owner, projectId) => bindings.forget(owner, projectId)
+export const deleteCodingBinding = (owner, projectId) => bindings.remove(owner, projectId)
 export const forgetOwnerCodingBindings = (owner) => bindings.forgetOwner(owner)

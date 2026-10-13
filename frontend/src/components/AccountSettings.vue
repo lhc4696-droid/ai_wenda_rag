@@ -1,6 +1,7 @@
 <script setup>
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import AppIcon from './AppIcon.vue'
+import ModelSettings from './ModelSettings.vue'
 import { accountUsage, changePassword, renameAccount } from '../api/auth.js'
 import { passwordError, usernameError } from '../lib/account-validation.js'
 
@@ -9,10 +10,10 @@ const props = defineProps({
   initialTab: {
     type: String,
     default: 'profile',
-    validator: (value) => ['profile', 'security'].includes(value),
+    validator: (value) => ['profile', 'security', 'models'].includes(value),
   },
 })
-const emit = defineEmits(['close', 'updated', 'password-changed'])
+const emit = defineEmits(['close', 'updated', 'password-changed', 'model-settings-updated'])
 const dialog = ref(null)
 const activeTab = ref(props.initialTab)
 const username = ref(props.user.username)
@@ -20,6 +21,9 @@ const currentPassword = ref('')
 const newPassword = ref('')
 const confirmPassword = ref('')
 const busy = ref('')
+const modelBusy = ref(false)
+const settingsBusy = computed(() => Boolean(busy.value) || modelBusy.value)
+const tabs = ['profile', 'security', 'models']
 const error = ref('')
 const feedback = ref('')
 const retrySeconds = ref(0)
@@ -30,11 +34,11 @@ let alive = true
 let previousFocus
 
 function close() {
-  if (!busy.value) emit('close')
+  if (!settingsBusy.value) emit('close')
 }
 
 function changeTab(tab) {
-  if (busy.value || activeTab.value === tab) return
+  if (settingsBusy.value || activeTab.value === tab) return
   activeTab.value = tab
   error.value = feedback.value = ''
   currentPassword.value = newPassword.value = confirmPassword.value = ''
@@ -43,15 +47,10 @@ function changeTab(tab) {
 function tabKeys(event) {
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
   event.preventDefault()
-  if (busy.value) return
-  const tab =
-    event.key === 'Home'
-      ? 'profile'
-      : event.key === 'End'
-        ? 'security'
-        : activeTab.value === 'profile'
-          ? 'security'
-          : 'profile'
+  if (settingsBusy.value) return
+  const direction = event.key === 'ArrowLeft' ? -1 : 1
+  const index = (tabs.indexOf(activeTab.value) + direction + tabs.length) % tabs.length
+  const tab = event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs.at(-1) : tabs[index]
   changeTab(tab)
   dialog.value?.querySelector(`#account-tab-${tab}`)?.focus()
 }
@@ -72,7 +71,7 @@ function handleFailure(cause) {
 }
 
 async function saveUsername() {
-  if (busy.value || retrySeconds.value) return
+  if (settingsBusy.value || retrySeconds.value) return
   feedback.value = ''
   error.value = usernameError(username.value)
   if (error.value) return
@@ -95,7 +94,7 @@ async function saveUsername() {
 }
 
 async function savePassword() {
-  if (busy.value || retrySeconds.value) return
+  if (settingsBusy.value || retrySeconds.value) return
   feedback.value = ''
   error.value = passwordError(currentPassword.value) || passwordError(newPassword.value)
   if (error.value) return
@@ -158,7 +157,7 @@ onUnmounted(() => {
           type="button"
           class="icon-button"
           aria-label="关闭账号设置"
-          :disabled="Boolean(busy)"
+          :disabled="settingsBusy"
           @click="close"
         >
           <AppIcon name="close" />
@@ -172,7 +171,7 @@ onUnmounted(() => {
           :aria-selected="activeTab === 'profile'"
           aria-controls="account-panel-profile"
           :tabindex="activeTab === 'profile' ? 0 : -1"
-          :disabled="Boolean(busy)"
+          :disabled="settingsBusy"
           @click="changeTab('profile')"
         >
           <AppIcon name="user" :size="17" />
@@ -185,11 +184,24 @@ onUnmounted(() => {
           :aria-selected="activeTab === 'security'"
           aria-controls="account-panel-security"
           :tabindex="activeTab === 'security' ? 0 : -1"
-          :disabled="Boolean(busy)"
+          :disabled="settingsBusy"
           @click="changeTab('security')"
         >
           <AppIcon name="lock" :size="17" />
           安全设置
+        </button>
+        <button
+          id="account-tab-models"
+          type="button"
+          role="tab"
+          :aria-selected="activeTab === 'models'"
+          aria-controls="account-panel-models"
+          :tabindex="activeTab === 'models' ? 0 : -1"
+          :disabled="settingsBusy"
+          @click="changeTab('models')"
+        >
+          <AppIcon name="spark" :size="17" />
+          模型设置
         </button>
       </div>
       <p v-if="error" class="auth-error" role="alert">{{ error }}</p>
@@ -301,6 +313,17 @@ onUnmounted(() => {
             {{ busy === 'password' ? '正在修改…' : '保存新密码' }}
           </button>
         </form>
+      </section>
+      <section
+        v-if="activeTab === 'models'"
+        id="account-panel-models"
+        role="tabpanel"
+        aria-labelledby="account-tab-models"
+      >
+        <ModelSettings
+          @busy="modelBusy = $event"
+          @updated="emit('model-settings-updated', $event)"
+        />
       </section>
     </dialog>
   </Teleport>

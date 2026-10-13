@@ -12,10 +12,15 @@ import {
 } from 'vue'
 import AppIcon from './AppIcon.vue'
 import ChatMessage from './ChatMessage.vue'
+import AccountMenu from './AccountMenu.vue'
+import AccountSettings from './AccountSettings.vue'
 import { buildCodingFileTree } from '../lib/coding-view.js'
 import { localCodingApi as api } from '../api/local-coding.js'
 import {
   getCodingBinding,
+  prepareCodingReconnect,
+  reconnectCodingBinding,
+  requestCodingDirectoryPermission,
   saveCodingBinding,
   forgetCodingBinding,
   deleteCodingBinding,
@@ -33,14 +38,27 @@ import '../local-coding.css'
 const props = defineProps({
   user: { type: Object, required: true },
   active: { type: Boolean, default: true },
+  signingOut: { type: Boolean, default: false },
 })
-const emit = defineEmits(['back', 'auth-expired'])
+const emit = defineEmits(['back', 'auth-expired', 'logout', 'profile-updated', 'password-changed'])
+const accountSettingsOpen = ref(false)
+const accountSettingsTab = ref('profile')
 const supported = localSupport()
 const instruction = ref('')
 const task = ref(null)
 const history = ref([])
 const conversations = ref([])
+const projects = ref([])
+const project = ref(null)
+const newProjectName = ref('')
+const renameDialog = ref(null)
+const renameDraft = ref('')
+const renameError = ref('')
+const savingProjectName = ref(false)
 const conversation = ref(null)
+const projectConversations = computed(() =>
+  conversations.value.filter((item) => item.project_id === project.value?.id),
+)
 const turns = ref([])
 const boundRoot = shallowRef(null)
 const loadingConversation = ref(false)
@@ -68,6 +86,14 @@ const followBottom = ref(true)
 const historyDetails = ref(null)
 const consent = ref(null)
 const consentMode = ref('start')
+const reconnectCandidate = shallowRef(null)
+const consentError = ref('')
+const canReconnect = computed(
+  () =>
+    ['start', 'connect'].includes(consentMode.value) &&
+    reconnectCandidate.value?.owner === props.user.id &&
+    reconnectCandidate.value?.conversationId === project.value?.id,
+)
 const recovery = ref(null)
 const selectedPath = ref('')
 const terminal = new Set(['completed', 'failed', 'cancelled', 'interrupted'])
@@ -85,7 +111,34 @@ const legacyHistory = computed(() => history.value.filter((item) => !item.conver
 const visibleChange = computed(
   () => changes.value.find((item) => item.path === selectedPath.value) || changes.value[0],
 )
-const locked = computed(() => busy.value || authorizing.value || loadingConversation.value)
+const locked = computed(
+  () =>
+    busy.value ||
+    authorizing.value ||
+    loadingConversation.value ||
+    savingProjectName.value ||
+    props.signingOut ||
+    accountSettingsOpen.value,
+)
+function openAccountSettings(tab) {
+  if (locked.value || activeHistory.value.length || !props.active) return
+  accountSettingsTab.value = tab
+  accountSettingsOpen.value = true
+}
+function logoutFromCoding() {
+  if (
+    (busy.value || authorizing.value || activeHistory.value.length) &&
+    !window.confirm(
+      '退出登录会停止本页面的文件操作并清除保存的目录连接，已经写入的文件不会自动撤销。确定退出吗？',
+    )
+  )
+    return
+  stop() // Close the local execution gate before the logout request starts.
+  emit('logout')
+}
+function modelSettingsUpdated() {
+  window.dispatchEvent(new Event('zhiyan-model-settings-updated'))
+}
 const title = computed(
   () => conversation.value?.title || turns.value[0]?.instruction || '新的编程对话',
 )
@@ -100,8 +153,10 @@ function answerFor(item) {
   return ''
 }
 const currentProgress = computed(() => {
+  if (savingProjectName.value) return '正在保存项目名称'
   if (loadingConversation.value) return '正在打开编程对话'
-  if (authorizing.value) return '等待你选择并授权文件夹'
+  if (authorizing.value)
+    return canReconnect.value ? '等待浏览器恢复目录授权' : '正在检查或连接项目目录'
   if (busy.value && ['restore', 'clear'].includes(consentMode.value)) return '正在处理本地恢复记录'
   if (locked.value && !task.value) return '正在读取目录结构'
   return task.value ? labels[task.value.status] : '尚未开始执行'
@@ -142,7 +197,14 @@ function closePanels(restoreFocus = false) {
     nextTick(() => document.getElementById(`coding-toggle-${panel}`)?.focus())
 }
 function dismissSidePanel(event) {
-  if (!panelOverlay.value || consent.value?.open || changesDialog.value?.open) return
+  if (accountSettingsOpen.value) return
+  if (
+    !panelOverlay.value ||
+    consent.value?.open ||
+    changesDialog.value?.open ||
+    renameDialog.value?.open
+  )
+    return
   event.preventDefault()
   closePanels(true)
 }
@@ -206,19 +268,18 @@ function newTaskView() {
   ++viewGeneration
   conversation.value = null
   turns.value = []
-  boundRoot.value = null
   task.value = null
   pendingQuestion.value = ''
   instruction.value = ''
   rememberConversation(null)
-  directoryName.value = '尚未选择工作目录'
-  files.value = []
+  directoryName.value = project.value?.directory_name || '尚未选择工作目录'
+  if (!boundRoot.value) files.value = []
   changes.value = []
   events.value = []
   selectedPath.value = ''
   fileFilter.value = ''
   collapsedFolders.value = new Set()
-  notice.value = ''
+  notice.value = project.value ? '新的独立对话：共享此项目的文件，不带入其他对话的聊天记录。' : ''
   error.value = ''
   closePanels()
   nextTick(() => textarea.value?.focus())
@@ -227,6 +288,7 @@ let alive = true
 let generation = 0
 let viewGeneration = 0
 let refreshGeneration = 0
+let capabilityGeneration = 0
 let session = null
 let requestController = null
 let restoreController = null
@@ -242,6 +304,64 @@ function rememberConversation(id) {
   } catch {
     // Browser storage may be disabled; the open conversation still works in memory.
   }
+}
+function rememberProject(id) {
+  try {
+    const key = `zhiyan-coding-project:${props.user.id}`
+    if (id) sessionStorage.setItem(key, id)
+    else sessionStorage.removeItem(key)
+  } catch {
+    // The selected project still works when session storage is unavailable.
+  }
+}
+async function selectProject(id) {
+  if (locked.value) return
+  const selected = projects.value.find((item) => item.id === id)
+  if (!selected) return
+  const owner = props.user.id
+  project.value = selected
+  boundRoot.value = null
+  files.value = []
+  newTaskView()
+  const view = viewGeneration
+  const current = () => alive && props.active && props.user.id === owner && view === viewGeneration
+  rememberProject(selected.id)
+  loadingConversation.value = true
+  try {
+    const root = supported ? await getCodingBinding(owner, selected.id) : null
+    if (!current()) return
+    boundRoot.value = root ? markRaw(root) : null
+    notice.value = root
+      ? '已切换项目，可以打开已有对话或直接开始新对话，无需重新选择目录。'
+      : '已切换项目。目录连接不可用，请重新连接原目录后继续编程。'
+    openHistoryList()
+  } catch (cause) {
+    if (current()) failure(cause)
+  } finally {
+    if (alive && view === viewGeneration) loadingConversation.value = false
+  }
+}
+async function ensureConversation(run) {
+  if (conversation.value) return
+  const selected = project.value
+  const owner = props.user.id
+  if (!selected) throw new Error('请先连接项目目录。')
+  const created = await api.createConversation({
+    client_conversation_id: crypto.randomUUID(),
+    project_id: selected.id,
+    directory_name: selected.directory_name,
+  })
+  if (
+    !alive ||
+    !props.active ||
+    run !== generation ||
+    props.user.id !== owner ||
+    project.value?.id !== selected.id
+  )
+    throw new DOMException('Stopped', 'AbortError')
+  conversation.value = created
+  turns.value = []
+  rememberConversation(created.id)
 }
 function upsertTurn(value) {
   task.value = value
@@ -266,15 +386,16 @@ async function showTurnChanges(item) {
   await openChanges()
 }
 async function disconnectDirectory() {
-  if (locked.value || !conversation.value) return
-  const id = conversation.value.id
+  if (locked.value || !project.value) return
+  const id = project.value.id
   const owner = props.user.id
   boundRoot.value = null
   authorizing.value = true
   try {
     await forgetCodingBinding(owner, id)
     if (alive)
-      notice.value = '已断开此对话的目录访问。聊天和本地文件保留，继续操作时需要重新连接原目录。'
+      notice.value =
+        '已断开整个项目的目录访问。所有对话和本地文件保留，继续编程时需要重新连接原目录。'
   } catch (cause) {
     failure(cause)
   } finally {
@@ -323,11 +444,13 @@ async function refresh() {
   if (!alive) return
   const owner = props.user.id
   const request = ++refreshGeneration
+  const modelRevision = capabilityGeneration
   const results = await Promise.allSettled([
     api.list(),
     listLocalJournals(owner),
     api.capabilities(),
     api.listConversations(),
+    api.listProjects(),
   ])
   if (!alive || props.user.id !== owner || request !== refreshGeneration) return
   if (results[0].status === 'fulfilled') history.value = results[0].value.items
@@ -339,30 +462,39 @@ async function refresh() {
       changes.value = journal?.entries || []
     }
   } else failure(results[1].reason)
-  if (results[2].status === 'fulfilled') capabilities.value = results[2].value
-  else failure(results[2].reason)
+  if (modelRevision === capabilityGeneration) {
+    if (results[2].status === 'fulfilled') capabilities.value = results[2].value
+    else failure(results[2].reason)
+  }
   if (results[3].status === 'fulfilled') {
     conversations.value = results[3].value.items
     const current = conversations.value.find((item) => item.id === conversation.value?.id)
     if (current) conversation.value = current
   } else failure(results[3].reason)
+  if (results[4].status === 'fulfilled') {
+    projects.value = results[4].value.items
+    const current = projects.value.find((item) => item.id === project.value?.id)
+    if (current) project.value = current
+  } else failure(results[4].reason)
 }
 
 async function askStart() {
   if (locked.value || !instruction.value.trim() || !supported || activeHistory.value.length) return
   pendingInstruction = instruction.value.trim()
   consentMode.value = 'start'
+  if (!project.value) newProjectName.value = ''
   recovery.value = null
   error.value = ''
   notice.value = ''
   const run = ++generation
   const owner = props.user.id
-  const root = boundRoot.value
-  if (root && conversation.value) {
+  reconnectCandidate.value = null
+  consentError.value = ''
+  if (project.value) {
     authorizing.value = true
     try {
       // Recheck both the app's binding and browser permission, without prompting.
-      const currentRoot = await getCodingBinding(owner, conversation.value.id)
+      const currentRoot = await getCodingBinding(owner, project.value.id)
       if (!alive || !props.active || run !== generation || props.user.id !== owner) return
       if (currentRoot) {
         boundRoot.value = markRaw(currentRoot)
@@ -371,7 +503,12 @@ async function askStart() {
         return
       }
       boundRoot.value = null
-      notice.value = '目录连接已断开或浏览器权限已失效，请重新连接此项目的原目录。'
+      const candidate = await prepareCodingReconnect(owner, project.value.id)
+      if (!alive || !props.active || run !== generation || props.user.id !== owner) return
+      reconnectCandidate.value = candidate ? markRaw(candidate) : null
+      notice.value = candidate
+        ? '原目录记录仍在，确认恢复访问即可，无需重新选择文件夹。'
+        : '没有可恢复的目录记录，请重新选择此项目的原目录。'
     } catch (cause) {
       failure(cause)
       return
@@ -384,13 +521,30 @@ async function askStart() {
   if (!alive || !props.active || run !== generation || props.user.id !== owner) return
   if (!consent.value?.open) consent.value?.showModal()
 }
-async function askConnect() {
+async function askConnect(newProject = false) {
   if (locked.value || !supported) return
   const run = ++generation
   pendingInstruction = ''
-  consentMode.value = 'connect'
+  consentMode.value = newProject ? 'project' : 'connect'
+  if (newProject || !project.value) newProjectName.value = ''
   recovery.value = null
   error.value = ''
+  consentError.value = ''
+  reconnectCandidate.value = null
+  const owner = props.user.id
+  if (!newProject && project.value) {
+    authorizing.value = true
+    try {
+      const candidate = await prepareCodingReconnect(owner, project.value.id)
+      if (!alive || !props.active || run !== generation || props.user.id !== owner) return
+      reconnectCandidate.value = candidate ? markRaw(candidate) : null
+    } catch (cause) {
+      failure(cause)
+      return
+    } finally {
+      authorizing.value = false
+    }
+  }
   await nextTick()
   if (!alive || !props.active || run !== generation) return
   if (!consent.value?.open) consent.value?.showModal()
@@ -400,18 +554,22 @@ async function askRecovery(journal, mode) {
   const run = ++generation
   recovery.value = structuredClone(toRaw(journal))
   consentMode.value = mode
+  reconnectCandidate.value = null
+  consentError.value = ''
   await nextTick()
   if (!alive || !props.active || run !== generation) return
   consent.value.showModal()
 }
 
-async function permitOnce() {
+async function permitOnce(forcePicker = false) {
   if (locked.value) return
   const run = ++generation
   const mode = consentMode.value
   const owner = props.user.id
   const view = viewGeneration
+  const candidate = !forcePicker && canReconnect.value ? reconnectCandidate.value : null
   let executionOwnsCleanup = false
+  let keepConsentOpen = false
   const current = () =>
     alive &&
     props.active &&
@@ -438,41 +596,68 @@ async function permitOnce() {
   authorizing.value = true
   error.value = ''
   notice.value = ''
+  consentError.value = ''
   try {
     // Must be the direct result of this trusted click, before network/IDB awaits.
-    const root = await window.showDirectoryPicker({
-      mode: 'readwrite',
-      id: 'zhiyan-coding-project',
-    })
-    assertCurrent()
-    consent.value.close()
-    if (mode === 'start' || mode === 'connect') {
-      let currentConversation = conversation.value
-      if (!currentConversation) {
-        currentConversation = await api.createConversation({
-          client_conversation_id: crypto.randomUUID(),
-          directory_name: root.name.slice(0, 120),
-        })
-        assertCurrent()
-        conversation.value = currentConversation
-        turns.value = []
-        task.value = null
-        rememberConversation(currentConversation.id)
-      }
-      if (root.name.slice(0, 120) !== currentConversation.directory_name)
-        throw new Error(
-          `请选择此项目原先的目录“${currentConversation.directory_name}”。不同项目请新建对话。`,
-        )
-      // The binding helper checks handle identity, never just a matching folder name.
-      await saveCodingBinding(owner, currentConversation.id, root)
-      if (!current()) {
-        await forgetCodingBinding(owner, currentConversation.id)
+    let root
+    if (candidate) {
+      const permission = await requestCodingDirectoryPermission(candidate.handle)
+      assertCurrent()
+      if (permission !== 'granted') {
+        keepConsentOpen = true
+        consentError.value =
+          '浏览器尚未允许目录读写，未执行任务。可重试；如果权限已被禁止，请先检查浏览器的站点权限设置。'
         return
       }
+      root = await reconnectCodingBinding(owner, project.value.id, candidate)
+      if (!current()) {
+        await forgetCodingBinding(owner, candidate.conversationId)
+        return
+      }
+    } else {
+      root = await window.showDirectoryPicker({
+        mode: 'readwrite',
+        id: 'zhiyan-coding-project',
+      })
+    }
+    assertCurrent()
+    if (['start', 'connect', 'project'].includes(mode)) {
+      let currentProject = mode === 'project' ? null : project.value
+      if (!currentProject) {
+        currentProject = await api.createProject({
+          client_project_id: crypto.randomUUID(),
+          directory_name: root.name.slice(0, 120),
+          name: newProjectName.value.trim(),
+        })
+        assertCurrent()
+      }
+      if (root.name.slice(0, 120) !== currentProject.directory_name)
+        throw new Error(
+          `请选择此项目原先的目录“${currentProject.directory_name}”。不同目录请添加新项目。`,
+        )
+      // The binding helper checks handle identity, never just a matching folder name.
+      if (!candidate) await saveCodingBinding(owner, currentProject.id, root)
+      if (!current()) {
+        await forgetCodingBinding(owner, currentProject.id)
+        return
+      }
+      if (project.value?.id !== currentProject.id) {
+        conversation.value = null
+        turns.value = []
+        task.value = null
+        files.value = []
+        changes.value = []
+        events.value = []
+        rememberConversation(null)
+        if (mode === 'project') instruction.value = ''
+      }
+      project.value = currentProject
+      rememberProject(currentProject.id)
       boundRoot.value = markRaw(root)
       directoryName.value = root.name
-      if (mode === 'connect') {
-        notice.value = '项目目录已连接。在此对话中继续发送需求，无需每轮重新选择或授权。'
+      consent.value.close()
+      if (mode !== 'start') {
+        notice.value = '项目目录已连接。此项目下的所有对话复用目录，无需每次选择或授权。'
         return
       }
       executionOwnsCleanup = true
@@ -480,6 +665,7 @@ async function permitOnce() {
       await executeInDirectory(root, run)
       return
     }
+    consent.value.close()
     await navigator.locks.request('zhiyan-local-file-task', { ifAvailable: true }, async (lock) => {
       if (!lock) throw new Error('另一个知言标签页正在操作本地文件，请等待其结束。')
       assertCurrent()
@@ -500,7 +686,17 @@ async function permitOnce() {
       }
     })
   } catch (cause) {
-    if (cause.name === 'AbortError' && alive)
+    if (candidate && current()) {
+      keepConsentOpen = true
+      consentError.value =
+        cause.name === 'NotFoundError'
+          ? '原目录已不存在或无法定位，请确认文件夹位置，必要时重新选择原目录。'
+          : cause.name === 'SecurityError'
+            ? '浏览器未接受本次授权请求，请再次点击恢复访问；若仍被拒绝，请检查站点权限设置。'
+            : cause.name === 'AbortError'
+              ? '已取消授权，未启动任务。'
+              : cause.message || '恢复目录访问失败，可重试或重新选择原目录。'
+    } else if (cause.name === 'AbortError' && alive)
       notice.value = '目录选择或本次操作已取消，未执行新的文件操作。'
     else failure(cause)
   } finally {
@@ -509,7 +705,10 @@ async function permitOnce() {
       session = null
       restoreController = null
       requestController?.abort()
-      consent.value?.close()
+      if (!keepConsentOpen || !current()) {
+        consent.value?.close()
+        reconnectCandidate.value = null
+      }
       if (alive) await refresh()
       busy.value = false
       authorizing.value = false
@@ -523,6 +722,7 @@ async function executeInDirectory(root, run) {
     await navigator.locks.request('zhiyan-local-file-task', { ifAvailable: true }, async (lock) => {
       if (!lock) throw new Error('另一个知言标签页正在操作本地文件，请等待其结束。')
       if (!alive || !props.active || run !== generation) return
+      await ensureConversation(run)
       await runTask(root, run)
     })
   } catch (cause) {
@@ -542,7 +742,14 @@ async function executeInDirectory(root, run) {
 async function runTask(root, run) {
   const owner = props.user.id
   const conversationId = conversation.value?.id
-  if (!conversationId || boundRoot.value !== root) throw new Error('请先连接此对话的项目目录。')
+  const projectId = project.value?.id
+  if (
+    !conversationId ||
+    !projectId ||
+    conversation.value.project_id !== projectId ||
+    boundRoot.value !== root
+  )
+    throw new Error('请先连接此对话所属的项目目录。')
   const clientId = crypto.randomUUID()
   const grantToken = crypto.randomUUID() + crypto.randomUUID()
   const controller = new AbortController()
@@ -553,11 +760,20 @@ async function runTask(root, run) {
     run === generation &&
     !controller.signal.aborted &&
     props.user.id === owner &&
+    project.value?.id === projectId &&
     conversation.value?.id === conversationId &&
     boundRoot.value === root
   const assertCurrent = () => {
     if (!current()) throw new DOMException('Stopped', 'AbortError')
   }
+  // Creating a new conversation can take time; recheck the project grant before scanning.
+  const activeRoot = await getCodingBinding(owner, projectId)
+  assertCurrent()
+  if (!activeRoot || !(await root.isSameEntry(activeRoot))) {
+    boundRoot.value = null
+    throw new Error('项目目录连接已失效，请重新连接原目录。')
+  }
+  assertCurrent()
   events.value = []
   files.value = []
   changes.value = []
@@ -578,7 +794,7 @@ async function runTask(root, run) {
     changes.value = session.journal.entries.map((entry) => ({ ...entry }))
   })
   const local = session
-  event('使用当前对话已连接的目录，重新查看最新目录结构；暂不读取全部文件正文。')
+  event('使用所属项目已连接的目录，重新查看最新目录结构；暂不读取全部文件正文。')
   const scan = await local.scan()
   assertCurrent()
   event(
@@ -613,7 +829,7 @@ async function runTask(root, run) {
     local.expiresAt = expires
     while (current()) {
       if (performance.now() >= expires)
-        throw new Error('本轮执行达到时间上限，已停止文件操作。目录仍绑定此对话，可继续发送需求。')
+        throw new Error('本轮执行达到时间上限，已停止文件操作。项目目录连接保留，可继续发送需求。')
       const state = await api.get(identifier, requestSignal())
       assertCurrent()
       if (state.client_task_id !== clientId.replaceAll('-', ''))
@@ -634,8 +850,8 @@ async function runTask(root, run) {
         assertCurrent()
         if (latest.status !== 'waiting_tools' || latest.round !== state.round)
           throw new Error('任务状态已经变化，停止本地操作。')
-        // A different tab may have disconnected this conversation or cleared login bindings.
-        const activeRoot = await getCodingBinding(owner, conversationId)
+        // A different tab may have disconnected this project or cleared login bindings.
+        const activeRoot = await getCodingBinding(owner, projectId)
         assertCurrent()
         if (!activeRoot || !(await root.isSameEntry(activeRoot))) {
           boundRoot.value = null
@@ -689,12 +905,13 @@ function stop() {
   requestController?.abort()
   restoreController?.abort()
   consent.value?.close()
+  reconnectCandidate.value = null
   changesDialog.value?.close()
+  renameDialog.value?.close()
   // Merely viewing an unfinished history item must not cancel another tab's execution.
   if (session && task.value && !terminal.has(task.value.status)) api.stopOnLeave(task.value.id)
   if (busy.value || authorizing.value)
-    notice.value =
-      '已停止本轮文件操作，正在收尾。项目目录仍与此对话绑定，已保存的改动不会自动撤销。'
+    notice.value = '已停止本轮文件操作，正在收尾。项目目录连接保留，已保存的改动不会自动撤销。'
 }
 async function cancelHistory(item) {
   try {
@@ -719,6 +936,8 @@ function showHistory(item) {
   if (locked.value) return
   ++viewGeneration
   conversation.value = null
+  project.value = null
+  rememberProject(null)
   boundRoot.value = null
   turns.value = [item]
   task.value = item
@@ -755,6 +974,11 @@ async function showConversation(item) {
     const detail = await api.getConversation(item.id)
     if (!current()) return
     conversation.value = detail
+    project.value = projects.value.find((entry) => entry.id === detail.project_id) || {
+      id: detail.project_id,
+      directory_name: detail.directory_name,
+    }
+    rememberProject(detail.project_id)
     turns.value = detail.tasks || []
     task.value = turns.value.at(-1) || null
     events.value = taskEvents.get(task.value?.id) || []
@@ -764,7 +988,7 @@ async function showConversation(item) {
     collapsedFolders.value = new Set()
     directoryName.value = detail.directory_name
     rememberConversation(detail.id)
-    const root = supported ? await getCodingBinding(owner, detail.id) : null
+    const root = supported ? await getCodingBinding(owner, detail.project_id) : null
     if (!current()) return
     boundRoot.value = root ? markRaw(root) : null
     notice.value = root
@@ -789,17 +1013,92 @@ async function removeConversation(item) {
   loadingConversation.value = true
   try {
     await api.removeConversation(item.id)
-    await deleteCodingBinding(owner, item.id)
     if (!current()) return
     await refresh()
     if (!current()) return
     loadingConversation.value = false
     if (conversation.value?.id === item.id) newTaskView()
-    notice.value = '已删除编程对话并移除此对话的目录绑定；本地文件和恢复记录保留。'
+    notice.value = '已删除此对话；项目目录连接、其他对话、本地文件和恢复记录均保留。'
   } catch (cause) {
     if (current()) failure(cause)
   } finally {
     if (current()) loadingConversation.value = false
+  }
+}
+async function openProjectRename() {
+  if (locked.value || !project.value) return
+  const run = ++generation
+  renameDraft.value = project.value.name || project.value.directory_name
+  renameError.value = ''
+  await nextTick()
+  if (alive && props.active && run === generation) renameDialog.value?.showModal()
+}
+async function saveProjectName() {
+  if (locked.value || !project.value) return
+  const selected = project.value
+  const owner = props.user.id
+  const run = ++generation
+  savingProjectName.value = true
+  renameError.value = ''
+  const current = () =>
+    alive &&
+    props.active &&
+    props.user.id === owner &&
+    run === generation &&
+    project.value?.id === selected.id
+  try {
+    const updated = await api.renameProject(selected.id, { name: renameDraft.value.trim() })
+    if (!current()) return
+    ++refreshGeneration // Ignore list snapshots requested before this successful rename.
+    project.value = updated
+    projects.value = projects.value.map((entry) => (entry.id === updated.id ? updated : entry))
+    renameDialog.value?.close()
+    notice.value = '项目名称已更新，文件夹、目录授权和对话记录均保持不变。'
+  } catch (cause) {
+    if (current()) {
+      renameError.value = cause.message || '项目改名失败，请稍后重试。'
+      if (cause.status === 401) failure(cause)
+    }
+  } finally {
+    savingProjectName.value = false
+  }
+}
+async function removeProject() {
+  if (locked.value || !project.value) return
+  const selected = project.value
+  if (
+    !window.confirm(
+      `删除项目“${selected.name || selected.directory_name}”（目录：${selected.directory_name}）及其全部对话和执行记录？本地文件和浏览器恢复记录不会删除。`,
+    )
+  )
+    return
+  const owner = props.user.id
+  const view = ++viewGeneration
+  loadingConversation.value = true
+  try {
+    await api.removeProject(selected.id)
+    let bindingError = null
+    try {
+      await deleteCodingBinding(owner, selected.id)
+    } catch (cause) {
+      bindingError = cause
+    }
+    if (!alive || props.user.id !== owner || view !== viewGeneration) return
+    await refresh()
+    if (!alive || props.user.id !== owner || view !== viewGeneration) return
+    project.value = null
+    boundRoot.value = null
+    rememberProject(null)
+    loadingConversation.value = false
+    newTaskView()
+    notice.value = '项目及其对话记录已删除；本地文件和浏览器恢复记录保留。'
+    if (bindingError)
+      error.value =
+        '浏览器中的旧目录记录未能清除；项目已不可执行，请在浏览器站点设置中撤销目录权限。'
+  } catch (cause) {
+    failure(cause)
+  } finally {
+    if (alive) loadingConversation.value = false
   }
 }
 function beforeLeave(event) {
@@ -811,12 +1110,23 @@ function beforeLeave(event) {
 watch(
   () => props.active,
   (active) => {
-    if (!active) stop()
-    else refresh()
+    if (!active) {
+      accountSettingsOpen.value = false
+      stop()
+    } else refresh()
   },
 )
 watch(instruction, () => nextTick(resizeInput))
 watch([turns, pendingQuestion, locked], () => scrollChat(), { deep: true })
+async function refreshModelCapabilities() {
+  const revision = ++capabilityGeneration
+  try {
+    const value = await api.capabilities()
+    if (alive && revision === capabilityGeneration) capabilities.value = value
+  } catch {
+    // Existing task/folder bindings are unaffected by a metadata refresh failure.
+  }
+}
 onMounted(async () => {
   const initialGeneration = generation
   const initialView = viewGeneration
@@ -824,13 +1134,14 @@ onMounted(async () => {
   window.addEventListener('resize', fitPanels)
   window.addEventListener('pagehide', stop)
   window.addEventListener('beforeunload', beforeLeave)
+  window.addEventListener('zhiyan-model-settings-updated', refreshModelCapabilities)
   await refresh()
   if (!alive || props.user.id !== componentOwner) return
   try {
     const id = sessionStorage.getItem(`zhiyan-coding-conversation:${componentOwner}`)
     const item = conversations.value.find((entry) => entry.id === id)
+    const projectId = sessionStorage.getItem(`zhiyan-coding-project:${componentOwner}`)
     if (
-      item &&
       props.active &&
       !conversation.value &&
       !locked.value &&
@@ -838,8 +1149,10 @@ onMounted(async () => {
       !instruction.value.trim() &&
       generation === initialGeneration &&
       viewGeneration === initialView
-    )
-      await showConversation(item)
+    ) {
+      if (item) await showConversation(item)
+      else if (projectId) await selectProject(projectId)
+    }
   } catch {
     // Failure to remember the selected conversation does not block manual selection.
   }
@@ -852,11 +1165,21 @@ onUnmounted(() => {
   window.removeEventListener('pagehide', stop)
   window.removeEventListener('beforeunload', beforeLeave)
   window.removeEventListener('resize', fitPanels)
+  window.removeEventListener('zhiyan-model-settings-updated', refreshModelCapabilities)
 })
 </script>
 
 <template>
   <div class="coding-chat-shell" @keydown.esc="dismissSidePanel">
+    <AccountSettings
+      v-if="accountSettingsOpen && active"
+      :user="user"
+      :initial-tab="accountSettingsTab"
+      @close="accountSettingsOpen = false"
+      @updated="emit('profile-updated', $event)"
+      @password-changed="emit('password-changed', $event)"
+      @model-settings-updated="modelSettingsUpdated"
+    />
     <header class="cc-header">
       <div class="cc-header-leading">
         <button
@@ -879,7 +1202,15 @@ onUnmounted(() => {
       </div>
       <div class="cc-header-title">
         <h1 :title="title">{{ title }}</h1>
-        <p>{{ conversation || turns.length ? directoryName : '知言 AI · 在你的项目里工作' }}</p>
+        <p :title="project?.name ? `${project.name} · ${directoryName}` : directoryName">
+          {{
+            project?.name
+              ? `${project.name} · ${directoryName}`
+              : project || turns.length
+                ? directoryName
+                : '知言 AI · 在你的项目里工作'
+          }}
+        </p>
       </div>
       <div class="cc-header-actions">
         <button
@@ -908,12 +1239,17 @@ onUnmounted(() => {
           <AppIcon name="activity" :size="17" />
           <span>过程</span>
         </button>
-        <div class="cc-account" :title="user.username">
-          <span class="cc-avatar" aria-hidden="true">
-            {{ user.username?.slice(0, 1).toUpperCase() }}
-          </span>
-          <span>{{ user.username }}</span>
-        </div>
+        <AccountMenu
+          class="cc-account-menu"
+          menu-id="coding-account-dropdown"
+          :user="user"
+          :signing-out="signingOut"
+          :settings-disabled="locked || activeHistory.length > 0"
+          settings-disabled-hint="请先完成当前操作；编程任务执行中请等待结束或先停止，再修改账号或模型配置。"
+          show-model-settings
+          @settings="openAccountSettings"
+          @logout="logoutFromCoding"
+        />
       </div>
     </header>
 
@@ -952,13 +1288,57 @@ onUnmounted(() => {
           </button>
         </div>
         <div class="cc-panel-scroll">
+          <label for="coding-project-select" class="cc-project-label">当前项目</label>
+          <select
+            id="coding-project-select"
+            class="cc-project-select"
+            :value="project?.id || ''"
+            :disabled="locked || !projects.length"
+            @change="selectProject($event.target.value)"
+          >
+            <option value="" disabled>选择项目</option>
+            <option v-for="entry in projects" :key="entry.id" :value="entry.id">
+              {{ entry.name || entry.directory_name }}
+            </option>
+          </select>
+          <div class="cc-binding-actions">
+            <button
+              class="cc-button"
+              type="button"
+              :disabled="locked || !supported"
+              @click="askConnect(true)"
+            >
+              <AppIcon name="plus" :size="14" />
+              添加项目
+            </button>
+            <button
+              v-if="project"
+              class="cc-button"
+              type="button"
+              :disabled="locked"
+              @click="openProjectRename"
+            >
+              重命名
+            </button>
+            <button
+              v-if="project"
+              class="cc-button"
+              type="button"
+              :disabled="locked"
+              @click="removeProject"
+            >
+              删除项目
+            </button>
+          </div>
           <div class="cc-folder-chip" :title="directoryName">
             <AppIcon name="folder" :size="17" />
             <span>{{ directoryName }}</span>
           </div>
           <p class="cc-permission-hint">
             <AppIcon name="lock" :size="12" />
-            {{ boundRoot ? '已连接 · 后续消息复用此目录' : '未连接 · 仅查看已有聊天和修改记录' }}
+            {{
+              boundRoot ? '已连接 · 此项目所有对话共用目录' : '未连接 · 仅查看已有聊天和修改记录'
+            }}
           </p>
           <div class="cc-binding-actions">
             <button
@@ -966,10 +1346,10 @@ onUnmounted(() => {
               class="cc-button"
               type="button"
               :disabled="locked || !supported"
-              @click="askConnect"
+              @click="askConnect(false)"
             >
               <AppIcon name="folder" :size="14" />
-              {{ conversation ? '重新连接原目录' : '连接项目目录' }}
+              {{ project ? '恢复目录访问' : '连接项目目录' }}
             </button>
             <button
               v-else
@@ -1037,26 +1417,31 @@ onUnmounted(() => {
               </div>
             </template>
           </div>
-          <button class="cc-button" type="button" :disabled="locked" @click="newTaskView">
+          <button
+            class="cc-button"
+            type="button"
+            :disabled="locked || !project"
+            @click="newTaskView"
+          >
             <AppIcon name="plus" :size="15" />
             新建项目对话
           </button>
-          <details ref="historyDetails" class="cc-disclosure">
+          <details ref="historyDetails" class="cc-disclosure" open>
             <summary>
               <AppIcon name="chat" :size="14" />
               项目对话
-              <small>{{ conversations.length }}</small>
+              <small>{{ projectConversations.length }}</small>
             </summary>
             <button class="cc-button" type="button" :disabled="locked" @click="refresh">
               <AppIcon name="refresh" :size="13" />
               刷新记录
             </button>
-            <p v-if="!conversations.length" class="cc-panel-empty">
-              连接项目后的对话会保存在这里。
+            <p v-if="!projectConversations.length" class="cc-panel-empty">
+              {{ project ? '发送第一条需求后，对话会保存在此项目下。' : '请先选择或添加项目。' }}
             </p>
             <nav class="cc-history-list" aria-label="项目编程对话历史">
               <div
-                v-for="item in conversations"
+                v-for="item in projectConversations"
                 :key="item.id"
                 class="cc-history-item"
                 :class="{ 'is-selected': conversation?.id === item.id }"
@@ -1484,25 +1869,90 @@ onUnmounted(() => {
     </dialog>
 
     <dialog
+      ref="renameDialog"
+      class="local-consent"
+      aria-labelledby="project-rename-title"
+      @cancel="savingProjectName && $event.preventDefault()"
+    >
+      <form @submit.prevent="saveProjectName">
+        <h2 id="project-rename-title">重命名项目</h2>
+        <label class="cc-project-label" for="project-rename-input">项目名称</label>
+        <input
+          id="project-rename-input"
+          v-model="renameDraft"
+          class="cc-project-select"
+          maxlength="120"
+          :disabled="savingProjectName"
+          autocomplete="off"
+          autofocus
+          placeholder="留空自动命名，例如：项目 1"
+          aria-describedby="project-rename-help"
+        />
+        <p id="project-rename-help">
+          最多 120 个字符。留空会分配下一个默认编号，仅修改显示名称，不修改本地文件夹。
+        </p>
+        <p v-if="renameError" role="alert">{{ renameError }}</p>
+        <div class="local-consent-actions">
+          <button
+            class="coding-button"
+            type="button"
+            :disabled="savingProjectName"
+            @click="renameDialog?.close()"
+          >
+            取消
+          </button>
+          <button class="coding-button coding-primary" type="submit" :disabled="savingProjectName">
+            {{ savingProjectName ? '保存中…' : '保存名称' }}
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog
       ref="consent"
       class="local-consent"
       aria-labelledby="local-consent-title"
       @cancel="locked && $event.preventDefault()"
+      @close="reconnectCandidate = null"
     >
       <span class="local-consent-icon"><AppIcon name="lock" :size="25" /></span>
       <h2 id="local-consent-title">
         {{
-          ['start', 'connect'].includes(consentMode)
-            ? '为此项目对话连接本地文件夹'
+          ['start', 'connect', 'project'].includes(consentMode)
+            ? canReconnect
+              ? '恢复此项目的目录访问'
+              : '为项目连接本地文件夹'
             : consentMode === 'restore'
               ? '允许知言恢复这次文件修改？'
               : '清除这份本地恢复记录？'
         }}
       </h2>
-      <template v-if="['start', 'connect'].includes(consentMode)">
+      <template v-if="['start', 'connect', 'project'].includes(consentMode)">
+        <template v-if="!project || consentMode === 'project'">
+          <label class="cc-project-label" for="new-project-name">项目名称（可选）</label>
+          <input
+            id="new-project-name"
+            v-model="newProjectName"
+            class="cc-project-select"
+            maxlength="120"
+            :disabled="locked"
+            autocomplete="off"
+            placeholder="例如：个人网站；留空自动命名"
+            aria-describedby="new-project-name-help"
+          />
+          <p id="new-project-name-help">
+            不填写时按“项目 1、项目 2、项目 3……”依次命名，之后也可以修改。
+          </p>
+        </template>
         <p>
           仅针对
-          <strong>当前项目对话及你接下来选择的目录</strong>
+          <strong>
+            {{
+              canReconnect
+                ? '此项目下的所有对话及已保存的原目录'
+                : '此项目下的所有对话及你接下来选择的目录'
+            }}
+          </strong>
           申请以下权限：
         </p>
         <ul>
@@ -1511,15 +1961,23 @@ onUnmounted(() => {
           <li>把必要文件片段发送到后端及你配置的 AI 服务。</li>
         </ul>
         <p class="local-consent-scope">
-          后续消息会复用此目录连接，每轮只在你发送需求后执行。停止只结束当前一轮，不断开目录；你可随时主动断开。退出账号会清除此账号记住的目录连接。不允许执行命令、安装依赖或由模型删除文件。
+          同一项目内的新对话和后续消息会复用此目录连接，但各自的聊天记录独立。每轮只在你发送需求后执行。停止只结束当前一轮；断开目录对整个项目生效。退出账号会清除此账号记住的目录连接。不允许执行命令、安装依赖或由模型删除文件。
         </p>
-        <p v-if="conversation">
+        <p v-if="canReconnect">
+          已记住原目录“{{
+            project.directory_name
+          }}”。点击「恢复访问」后，只针对这个目录请求浏览器读写许可，不打开文件夹选择器。你主动断开过的连接也只会在这次明确确认后恢复。
+        </p>
+        <p v-else-if="project && consentMode !== 'project'">
           请重新选择此项目的原目录“{{
-            conversation.directory_name
-          }}”。若本浏览器仍有原目录记录，会核对目录本身；在新浏览器或退出账号后无原记录时无法核对完整路径，请自行确认。不同项目请新建对话，不要仅凭同名目录判断。
+            project.directory_name
+          }}”。若本浏览器仍有原目录记录，会核对目录本身；在新浏览器或退出账号后无原记录时无法核对完整路径，请自行确认。不同目录请添加新项目，不要仅凭同名目录判断。
         </p>
-        <p>
+        <p v-if="!canReconnect">
           点击后会出现浏览器目录选择／权限提示。目录连接仅记在当前浏览器；若浏览器权限失效，需重新连接，知言无法跳过浏览器授权。
+        </p>
+        <p v-else>
+          如果拒绝授权，不会启动任务，也不会自动改为选择文件夹。原目录无法恢复时，可以主动点击「重新选择原目录」；仍需核对它是否是原来的文件夹。
         </p>
       </template>
       <template v-else-if="consentMode === 'restore'">
@@ -1534,11 +1992,20 @@ onUnmounted(() => {
           只清除当前浏览器中的备份，不删除电脑上的项目文件。清除后，无法再通过这条记录撤销修改。
         </p>
       </template>
+      <p v-if="consentError" role="alert">{{ consentError }}</p>
       <div class="local-consent-actions">
         <button class="coding-button" :disabled="locked" @click="consent?.close()">
           {{ consentMode === 'clear' ? '保留记录' : '拒绝' }}
         </button>
-        <button class="coding-button coding-primary" :disabled="locked" @click="permitOnce">
+        <button
+          v-if="canReconnect"
+          class="coding-button"
+          :disabled="locked"
+          @click="permitOnce(true)"
+        >
+          重新选择原目录
+        </button>
+        <button class="coding-button coding-primary" :disabled="locked" @click="permitOnce()">
           {{
             consentMode === 'clear'
               ? '确认清除'
@@ -1546,7 +2013,9 @@ onUnmounted(() => {
                 ? '等待浏览器确认…'
                 : consentMode === 'restore'
                   ? '允许这次恢复并选择目录'
-                  : '允许此项目对话并选择目录'
+                  : canReconnect
+                    ? '恢复访问'
+                    : '允许此项目并选择目录'
           }}
         </button>
       </div>

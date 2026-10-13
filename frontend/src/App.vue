@@ -158,8 +158,12 @@ onUnmounted(() => {
       :key="`coding-${user.id}`"
       :user="user"
       :active="workspace === 'coding'"
+      :signing-out="signingOut"
       @back="workspace = 'chat'"
       @auth-expired="expired"
+      @logout="logout"
+      @profile-updated="profileUpdated"
+      @password-changed="passwordChanged"
     />
   </template>
   <div v-else-if="connectionError" class="auth-loading">

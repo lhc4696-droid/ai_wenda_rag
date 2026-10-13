@@ -16,7 +16,7 @@ defineProps({
   user: { type: Object, required: true },
   signingOut: { type: Boolean, default: false },
 })
-defineEmits(['logout', 'profile-updated', 'password-changed', 'open-coding'])
+const emit = defineEmits(['logout', 'profile-updated', 'password-changed', 'open-coding'])
 
 const {
   messages,
@@ -59,6 +59,7 @@ const {
   attachmentCapabilities,
   attachmentError,
   attachmentBusy,
+  loadCapabilities,
   addFiles,
   removeAttachment,
 } = useConversations()
@@ -151,6 +152,11 @@ function openSettings(tab) {
   sidebarOpen.value = false
 }
 
+function openCoding() {
+  sidebarOpen.value = false
+  emit('open-coding')
+}
+
 function choosePrompt(prompt) {
   draft.value = prompt
   focusComposer()
@@ -226,8 +232,18 @@ watch(
 onMounted(() => {
   refreshHealth()
   initialize()
+  window.addEventListener('focus', loadCapabilities)
+  window.addEventListener('zhiyan-model-settings-updated', loadCapabilities)
 })
-onUnmounted(dispose)
+onUnmounted(() => {
+  window.removeEventListener('focus', loadCapabilities)
+  window.removeEventListener('zhiyan-model-settings-updated', loadCapabilities)
+  dispose()
+})
+
+function modelSettingsUpdated() {
+  window.dispatchEvent(new Event('zhiyan-model-settings-updated'))
+}
 </script>
 
 <template>
@@ -260,7 +276,7 @@ onUnmounted(dispose)
         <span>新建对话</span>
         <span class="button-arrow">↗</span>
       </button>
-      <button class="coding-entry" type="button" @click="sidebarOpen = false; $emit('open-coding')">
+      <button class="coding-entry" type="button" @click="openCoding">
         <span class="coding-entry-code" aria-hidden="true">&lt;/&gt;</span>
         <span>编程工作台</span>
         <span class="button-arrow">↗</span>
@@ -357,7 +373,12 @@ onUnmounted(dispose)
           </button>
           <span class="model-label">
             <AppIcon name="spark" :size="15" />
-            <span class="model-name" :title="model || '千问 AI'">{{ model || '千问 AI' }}</span>
+            <span
+              class="model-name"
+              :title="`${model || 'AI 模型'} · ${attachmentCapabilities?.model_source === 'custom' ? '自定义配置' : '项目默认配置'}`"
+            >
+              {{ model || 'AI 模型' }}
+            </span>
           </span>
         </div>
         <div class="conversation-heading">
@@ -561,9 +582,11 @@ onUnmounted(dispose)
               {{ attachmentError }}
             </p>
             <p v-if="draftAttachments.length" class="attachment-hint">
-              {{ sourceMode === 'chat'
-                ? '直接聊天不会读取文字文档；图片仍会交给视觉模型。'
-                : '查资料会检索文字文档片段；图片仍交给视觉模型。请勿上传无权分享的资料。' }}
+              {{
+                sourceMode === 'chat'
+                  ? '直接聊天不会读取文字文档；图片仍会交给视觉模型。'
+                  : '查资料会检索文字文档片段；图片仍交给视觉模型。请勿上传无权分享的资料。'
+              }}
             </p>
             <label class="sr-only" for="message-input">输入你的问题</label>
             <p
@@ -649,11 +672,8 @@ onUnmounted(dispose)
       @close="settingsOpen = false"
       @updated="$emit('profile-updated', $event)"
       @password-changed="$emit('password-changed', $event)"
+      @model-settings-updated="modelSettingsUpdated"
     />
-    <RetrievalChoice
-      v-if="routeChoice"
-      @choose="confirmRoute"
-      @cancel="cancelRouteChoice"
-    />
+    <RetrievalChoice v-if="routeChoice" @choose="confirmRoute" @cancel="cancelRouteChoice" />
   </div>
 </template>

@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/attachments", tags=["聊天附件"], dependencie
 
 @router.get("/capabilities", summary="附件类型、大小限制和图片能力")
 def capabilities(request: Request, user: UserResponse = Depends(require_user)):
-    return request.app.state.attachments.capabilities()
+    return request.app.state.attachments.capabilities(user.id)
 
 
 @router.post("", response_model=AttachmentResponse, status_code=201, summary="上传并解析一个私有附件",

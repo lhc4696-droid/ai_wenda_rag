@@ -5,6 +5,8 @@ import logging
 import time
 
 from .model import CodingModel
+from .compatible_model import OpenAICompatibleCodingModel
+from app.model_settings.schemas import ModelSettingsError
 from .schemas import CodingError
 from .service import CodingService, database_call
 from .tools import TOOL_DEFINITIONS
@@ -38,9 +40,25 @@ write_file 只允许创建不存在的新文件；replace_text修改既有文件
 
 class LocalCodingService(CodingService):
     """Reuse metered model calls and worker cancellation, not the snapshot tool engine."""
-    def __init__(self, store, model_calls, settings):
+    def __init__(self, store, model_calls, settings, model_settings=None):
         super().__init__(store, model_calls, settings)
         self.model = CodingModel(settings, LOCAL_TOOLS)
+        self.model_settings = model_settings
+
+    def model_for(self, user_id):
+        try:
+            profile = self.model_settings.resolve(user_id) if self.model_settings else None
+        except ModelSettingsError as error:
+            raise CodingError(str(error), error.code, error.status) from None
+        if profile:
+            return OpenAICompatibleCodingModel(self.settings, profile, LOCAL_TOOLS)
+        return self.model
+
+    async def _model_call(self, user_id, messages):
+        # Settings changes are blocked for the entire active task, including waits
+        # for browser tools. Each worker still gets its own credential snapshot.
+        model = await database_call(self.model_for, user_id)
+        return await super()._model_call(user_id, messages, model=model)
 
     def launch(self, user_id, task_id):
         if self.closing:

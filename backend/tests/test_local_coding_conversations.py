@@ -129,7 +129,9 @@ def test_v7_migration_preserves_legacy_tasks_and_is_repeatable(tmp_path):
         assert row[:4] == (identifier, identifier, 1, "保留旧回答")
         assert json.loads(row[4])[0]["message"] == "kept step" and row[5] == "grant-hash"
         assert db.execute("SELECT turn_count,last_turn_index FROM local_coding_conversations").fetchone() == (1, 1)
-        assert db.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 8
+        assert db.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 11
+        assert db.execute("SELECT project_id FROM local_coding_conversations").fetchone()[0] == identifier
+        assert db.execute("SELECT id FROM local_coding_projects").fetchone()[0] == identifier
         assert db.execute("PRAGMA foreign_key_check").fetchall() == []
         db.execute("DELETE FROM local_coding_conversations WHERE id=?", (identifier,))
         assert db.execute("SELECT count(*) FROM local_coding_tasks").fetchone()[0] == 0

@@ -66,7 +66,9 @@ class CodingService:
                 worker.cancel()
         await asyncio.gather(*(worker for _, worker in running), return_exceptions=True)
 
-    async def _model_call(self, user_id, messages):
+    async def _model_call(self, user_id, messages, model=None):
+        # A per-call provider keeps different accounts' keys and endpoints isolated.
+        model = model if model is not None else self.model
         input_size = len(json.dumps(messages, ensure_ascii=False))
         if input_size > 80000:
             raise CodingError("任务上下文达到上限，修改已保留；请缩小范围或从当前结果继续新任务", "CODING_CONTEXT_LIMIT")
@@ -75,14 +77,14 @@ class CodingService:
         try:
             while True:
                 try:
-                    await database_call(self.model_calls.reserve, identifier, user_id, input_size, self.settings, self.model.name)
+                    await database_call(self.model_calls.reserve, identifier, user_id, input_size, self.settings, model.name)
                     break
                 except ChatLimit as exc:
                     if exc.code in {"CHAT_RATE_LIMIT", "CHAT_USER_BUSY", "CHAT_SERVER_BUSY"}:
                         await asyncio.sleep(min(exc.retry_after, 60))
                         continue
                     raise CodingError(str(exc), exc.code, 429) from None
-            reply = await self.model.call(messages)
+            reply = await model.call(messages)
             state = "succeeded"
             return reply
         except asyncio.CancelledError:

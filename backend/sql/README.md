@@ -26,13 +26,16 @@ SQL 脚本是 `backend/sql/schema.sql`；Python 初始化入口和后端启动�
 | `email_verifications` | `id`、`email`、`purpose`、`user_id`、`code_hash`、`created_at`、`expires_at`、`attempts`、`status` | 注册和重置密码验证码；HMAC 摘要绑定记录 ID、邮箱和用途；单次使用 |
 | `schema_migrations` | `version`、`applied_at` | 已执行迁移版本与时间 |
 | `model_calls` | `request_id`、`user_id`、`model`、时间、状态、字符数、Token 数和错误类别 | 聊天额度、并发租约与调用统计；不保存问题和回答正文 |
+| `user_model_settings` | `user_id`、`enabled`、`base_url`、`api_key_encrypted`、`chat_model`、`coding_model`、`vision_model`、`updated_at` | 每账号一套个人模型配置；Key 为绑定账号和目标地址的 Fernet 密文，不能返回前端 |
 | `conversations` | `id`、`user_id`、`title`、`title_custom`、`created_at`、`updated_at`、`last_sequence` | 当前账号的聊天会话、标题和消息序号 |
 | `messages` | `id`、`conversation_id`、`client_message_id`、`sequence`、`role`、`content`、`status`、`model`、`request_id`、`reply_to_id`、`source_mode`、`sources_json`、租约、错误和裁剪标志 | 聊天问题与回答；记录资料模式与检索来源，保证顺序和重试幂等，删除会话时级联删除 |
 | `attachments` | `id`、`user_id`、`conversation_id`、文件名、类型、大小、额度、状态、解析正文、说明及过期时间 | 私有附件元数据和所有权，原文件另存磁盘 |
 | `message_attachments` | `message_id`、`attachment_id`、`position` | 消息与附件的关联及顺序，同会话重提问时可复用 |
 | `coding_projects` | `id`、`user_id`、`name`、`source_files_json`、`warnings_json`、时间 | 当前账号导入的原始文本项目快照，不随 Agent 任务修改 |
 | `coding_tasks` | `id`、`user_id`、`project_id`、`client_task_id`、`base_task_id`、状态、指令、文件副本、步骤、检查与结果 | 独立编程任务，支持幂等提交、取消、导出和基于结果继续；删除项目级联删除任务 |
-| `local_coding_conversations` | 用户、客户端会话编号、目录显示名、标题、last_turn_index、turn_count、时间 | 一个项目的连续编程对话；不保存浏览器句柄或本地绝对路径 |
+| `local_coding_projects` | 用户、客户端项目编号、name、name_request、目录显示名、时间 | 本地项目实体；名称与文件夹名独立，一个项目可以有多个独立对话，不保存浏览器句柄或绝对路径 |
+| `local_coding_project_numbers` | user_id、last_number | 每账号最后分配的默认名称编号；删除项目不回收编号 |
+| `local_coding_conversations` | 用户、project_id、客户端会话编号、目录显示名、标题、last_turn_index、turn_count、时间 | 项目下的连续编程对话；删除对话不删除项目或目录连接 |
 | `local_coding_tasks` | 用户、conversation_id、turn_index、客户端任务编号、授权摘要、指令、状态、模型轮次、上下文、待执行工具、进度、截止时间 | 会话中的一次执行；会话删除时级联删除，真实文件和恢复备份留在用户设备 |
 
 一个用户可以拥有多条登录会话。浏览器保存随机会话令牌，数据库保存其 SHA-256 摘要；退出时删除对应会话，过期的会话不能继续访问聊天接口。
@@ -66,7 +69,9 @@ SQL 脚本是 `backend/sql/schema.sql`；Python 初始化入口和后端启动�
 .\venv\Scripts\python.exe backend\migrate_db.py --backup
 ```
 
-迁移依次为 `001_email_verification.sql`（邮箱验证码）、`002_model_calls.sql`（模型调用元数据）、`003_conversation_history.sql`（聊天历史）、`004_attachments.sql`（私有附件）、`005_rag_modes.sql`（资料模式）、`006_coding_agent.sql`（旧 ZIP 编程）、`007_local_coding.sql`（浏览器任务）、`008_local_coding_conversations.sql`（连续项目对话），位于 `backend/sql/migrations/`，当前版本为 **8**。执行器 `backend/app/migrations.py` 将字段变更、数据复制和版本记录放在同一事务中，不自动降级。迁移 008 为每个旧本地任务创建一个会话，并复制重建任务表以增加非空会话外键与轮序，保留原任务编号、内容和结果。新库直接创建完整结构。本轮只提供脚本与回归用例，未执行真实迁移。
+迁移依次为 `001_email_verification.sql`（邮箱验证码）、`002_model_calls.sql`（模型调用元数据）、`003_conversation_history.sql`（聊天历史）、`004_attachments.sql`（私有附件）、`005_rag_modes.sql`（资料模式）、`006_coding_agent.sql`（旧 ZIP 编程）、`007_local_coding.sql`（浏览器任务）、`008_local_coding_conversations.sql`（连续项目对话）、`009_user_model_settings.sql`（个人模型配置）、`010_local_coding_projects.sql`（一个本地项目下多个对话）、`011_local_project_names.sql`（项目命名），位于 `backend/sql/migrations/`，当前版本为 **11**。执行器 `backend/app/migrations.py` 将字段变更、数据复制和版本记录放在同一事务中，不自动降级。迁移 008 为每个旧本地任务创建一个会话，并复制重建任务表以增加非空会话外键与轮序，保留原任务编号、内容和结果。009 仅新增配置表；010 为每个旧会话创建项目，项目 ID 沿用旧会话 ID 以兼容浏览器句柄，不按同名目录合并；011 保留原目录显示名作为旧项目名称，新增默认编号计数表。新库直接创建完整结构。本轮只提供脚本与回归用例，未执行真实迁移。
+
+个人模型 Key 使用环境变量 `MODEL_CONFIG_SECRET` 加密，不把主密钥存入 SQLite；仅有数据库不能恢复调用凭据。迁移服务器时需同时安全迁移该主密钥。关闭个人配置保留密文，删除配置移除记录，但不能保证旧备份或 WAL 已安全擦除。详情见 [用户自定义模型配置](../../docs/用户自定义模型配置.md)。
 
 不要单独向旧库执行新 schema.sql 代替迁移，也不要删库重建。`migrate_db.py --backup` 只备份 SQLite，附件目录需另行备份；Qdrant 索引不在其中，详见 [RAG 检索与三模式使用说明](../../docs/RAG检索与三模式使用说明.md)。
 

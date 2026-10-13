@@ -310,6 +310,14 @@
   }
 }
 @media (max-width: 480px) {
+  .account-tabs button {
+    gap: 5px;
+    padding-inline: 5px;
+    font-size: 12px;
+  }
+  .account-tabs button svg {
+    display: none;
+  }
   .profile-name {
     max-width: 70px;
     font-size: 12px;

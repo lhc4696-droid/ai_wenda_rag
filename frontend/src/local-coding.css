@@ -10,6 +10,8 @@
   background: var(--surface);
 }
 .cc-header {
+  position: relative;
+  z-index: 30;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(160px, auto) minmax(0, 1fr);
   align-items: center;
@@ -1069,6 +1071,9 @@
   }
 }
 @media (max-width: 1100px) {
+  .cc-account-menu .profile-name {
+    display: none;
+  }
   .cc-layout {
     grid-template-columns: var(--cc-files-width) minmax(0, 1fr) 0;
   }
@@ -1095,6 +1100,13 @@
   }
 }
 @media (max-width: 760px) {
+  .cc-account-menu .account-trigger {
+    gap: 0;
+    padding: 4px;
+  }
+  .cc-account-menu .account-chevron {
+    display: none;
+  }
   .cc-header {
     grid-template-columns: minmax(0, 1fr) minmax(80px, 1.1fr) minmax(0, 1fr);
     gap: 5px;
@@ -1244,4 +1256,28 @@
     transition: none !important;
     scroll-behavior: auto !important;
   }
+}
+.cc-project-label {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--text-secondary, #64748b);
+  font-size: 12px;
+}
+
+.cc-project-select {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border, #dce2eb);
+  border-radius: 10px;
+  color: inherit;
+  background: var(--surface, #fff);
+  font: inherit;
+  font-size: 13px;
+}
+
+.cc-project-select:focus-visible {
+  outline: 2px solid #4272f5;
+  outline-offset: 2px;
 }

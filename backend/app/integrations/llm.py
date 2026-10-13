@@ -33,6 +33,10 @@ class LLMProvider(Protocol):
 class DashScopeLLM:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+        self._max_output_tokens = settings.chat_max_output_tokens
+
+    def model_for(self, messages):
+        return self._settings.qwen_vision_model if any(getattr(item, "images", []) for item in messages) else self._settings.qwen_model
 
     async def chat(self, messages: list[ChatMessage]) -> LLMResult:
         if not self._settings.dashscope_api_key:
@@ -44,7 +48,7 @@ class DashScopeLLM:
             raise LLMError("模型依赖不完整，请安装后端 requirements.txt 中的版本", "LLM_DEPENDENCY_MISSING") from None
 
         vision = any(getattr(message, "images", []) for message in messages)
-        model = self._settings.qwen_vision_model if vision else self._settings.qwen_model
+        model = self.model_for(messages)
         if vision and not model:
             raise LLMError("当前会话包含图片，但未配置 QWEN_VISION_MODEL", "VISION_NOT_CONFIGURED", 422)
         system = self._settings.system_prompt + ATTACHMENT_POLICY
@@ -68,15 +72,21 @@ class DashScopeLLM:
                     model=model,
                     messages=payload,
                     result_format="message",
-                    max_tokens=self._settings.chat_max_output_tokens,
+                    max_tokens=self._max_output_tokens,
                     request_timeout=self._settings.chat_timeout,
                     session=session,
                 )
         except asyncio.TimeoutError:
             raise LLMError("AI 服务响应超时，请稍后重试或缩短问题", "LLM_TIMEOUT", 504) from None
+        except aiohttp.ClientConnectorError as exc:
+            logger.warning("llm_connection_failed request_id=%s type=connector_error details=%s", request_id.get(), str(exc))
+            raise LLMError("无法连接到 AI 服务，请检查网络或稍后重试", "LLM_CONNECTION_FAILED") from None
+        except aiohttp.ClientError as exc:
+            logger.warning("llm_client_error request_id=%s type=%s details=%s", request_id.get(), type(exc).__name__, str(exc))
+            raise LLMError("AI 服务请求失败，请稍后重试", "LLM_CLIENT_ERROR") from None
         except Exception as exc:
-            logger.warning("llm_connection_failed request_id=%s category=%s", request_id.get(), type(exc).__name__)
-            raise LLMError("连接 AI 服务失败，请稍后重试", "LLM_CONNECTION_FAILED") from None
+            logger.error("llm_unexpected_error request_id=%s type=%s", request_id.get(), type(exc).__name__, exc_info=True)
+            raise LLMError("AI 服务遇到意外错误，请稍后重试", "LLM_UNEXPECTED_ERROR") from None
 
         if response.status_code != HTTPStatus.OK:
             logger.warning("llm_rejected request_id=%s upstream_status=%s", request_id.get(), response.status_code)

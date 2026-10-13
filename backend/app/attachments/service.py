@@ -16,18 +16,24 @@ EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".txt", ".md", ".pdf", ".docx"}
 
 
 class AttachmentService:
-    def __init__(self, auth, settings):
+    def __init__(self, auth, settings, model_settings=None):
         self.store = AttachmentStore(auth, settings)
         self.storage = AttachmentStorage(settings.auth_db_path.parent / "attachments")
         self.settings = settings
+        self.model_settings = model_settings
         self.slots = asyncio.Semaphore(2)
         self.rag = None
 
-    def capabilities(self):
+    def capabilities(self, user_id=None):
+        profile = self.model_settings.public(user_id) if self.model_settings and user_id is not None else None
+        custom = bool(profile and profile["enabled"])
+        vision_model = profile["vision_model"] if custom else self.settings.qwen_vision_model
         return {"extensions": sorted(EXTENSIONS), "max_files": 3,
                 "max_bytes": self.settings.attachment_max_bytes,
-                "images_enabled": bool(self.settings.qwen_vision_model),
-                "vision_model": self.settings.qwen_vision_model or None,
+                "images_enabled": bool(vision_model),
+                "vision_model": vision_model or None,
+                "chat_model": profile["chat_model"] if custom else self.settings.qwen_model,
+                "model_source": "custom" if custom else "default",
                 "rag_enabled": self.settings.rag_enabled}
 
     async def process(self, identifier, extension):
@@ -62,8 +68,10 @@ class AttachmentService:
         if extension not in EXTENSIONS:
             raise AttachmentError("仅支持 JPG、PNG、WebP、TXT、Markdown、PDF 和 DOCX", 415)
         kind = "image" if extension in {".jpg", ".jpeg", ".png", ".webp"} else "document"
-        if kind == "image" and not self.settings.qwen_vision_model:
-            raise AttachmentError("尚未配置视觉模型，请在后端设置 QWEN_VISION_MODEL 后再上传图片", 422, "VISION_NOT_CONFIGURED")
+        if kind == "image":
+            capabilities = await asyncio.to_thread(self.capabilities, user_id)
+            if not capabilities["images_enabled"]:
+                raise AttachmentError("当前模型未启用图片能力：自定义模型请在账号设置填写视觉模型；默认模型由维护者配置 QWEN_VISION_MODEL", 422, "VISION_NOT_CONFIGURED")
         if not upload.size or upload.size > self.settings.attachment_max_bytes:
             raise AttachmentError("附件不能为空或超过单文件大小限制", 413)
         async with self.slots:
