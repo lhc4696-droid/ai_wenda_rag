@@ -284,7 +284,7 @@ def get_settings() -> Settings:
 
     return Settings(
         dashscope_api_key=os.getenv("DASHSCOPE_API_KEY"),
-        qwen_model=os.getenv("QWEN_MODEL", "qwen-plus"),
+        qwen_model=os.getenv("QWEN_MODEL", "qwen3.8-27b"),
         qwen_vision_model=os.getenv("QWEN_VISION_MODEL", "").strip(),
         qwen_coding_model=os.getenv("QWEN_CODING_MODEL", "").strip(),
         system_prompt=os.getenv(

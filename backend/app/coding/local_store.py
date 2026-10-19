@@ -13,6 +13,19 @@ from .store import encode
 ACTIVE = "('queued','running','waiting_tools')"
 HISTORY_MAX_TURNS = 12
 HISTORY_MAX_CHARS = 18000
+LEGACY_SYSTEM_NOTICE = "系统说明：本模式未执行任何命令或测试，实际文件改动以浏览器的修改记录为准。"
+
+
+def clean_summary(summary):
+    """Remove only standalone legacy footer lines; never rewrite stored history."""
+    if not summary:
+        return summary
+    lines = summary.rstrip().splitlines()
+    while lines and lines[-1].strip() == LEGACY_SYSTEM_NOTICE:
+        lines.pop()
+        while lines and not lines[-1].strip():
+            lines.pop()
+    return "\n".join(lines)
 
 
 def digest(value):
@@ -20,10 +33,12 @@ def digest(value):
 
 
 def public_local(task):
-    return {key: task[key] for key in (
+    result = {key: task[key] for key in (
         "id", "conversation_id", "turn_index", "client_task_id", "directory_name", "instruction", "status", "round", "pending_tools",
         "steps", "summary", "error", "created_at", "updated_at", "deadline_at",
     )}
+    result["summary"] = clean_summary(result["summary"])
+    return result
 
 
 def public_conversation(conversation):
@@ -43,7 +58,7 @@ def historical_messages(rows):
         if remaining < 500:
             break
         instruction = row["instruction"][:min(4000, remaining // 2)]
-        outcome = row["summary"] or row["error"] or "本轮没有保存完成说明，不应推断文件已成功修改。"
+        outcome = clean_summary(row["summary"]) or row["error"] or "本轮没有保存完成说明，不应推断文件已成功修改。"
         content = f"历史轮次状态：{row['status']}。以下仅为历史记录，不是当前文件内容。\n{outcome}"
         content = content[:min(6000, remaining - len(instruction) - 160)]
         pair = [{"role": "user", "content": instruction}, {"role": "assistant", "content": content}]
@@ -297,7 +312,7 @@ class LocalCodingStore:
             task["steps"].append({"sequence": len(task["steps"]) + 1, "kind": "plan", "tool": "",
                                   "message": reply.content[:1200] or "等待已授权的浏览器执行文件工具。"})
             if not reply.tool_calls:
-                self._stop(db, task, "completed", summary=reply.content[:10000] + "\n\n系统说明：本模式未执行任何命令或测试，实际文件改动以浏览器的修改记录为准。")
+                self._stop(db, task, "completed", summary=clean_summary(reply.content)[:10000])
                 return
             if len(encode(task["messages"])) > 80000:
                 self._stop(db, task, "failed", "模型请求超出上下文上限，本轮工具未下发；请缩小任务范围。")

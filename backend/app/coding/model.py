@@ -3,6 +3,8 @@
 import asyncio
 from dataclasses import dataclass
 
+from app.integrations.dashscope_messages import multimodal_messages
+
 from .schemas import CodingError
 from .tools import TOOL_DEFINITIONS
 
@@ -26,13 +28,13 @@ class CodingModel:
             raise CodingError("尚未配置 DASHSCOPE_API_KEY", "CODING_MODEL_NOT_CONFIGURED", 503)
         try:
             import aiohttp
-            from dashscope import AioGeneration
+            from dashscope import AioMultiModalConversation
 
             async with aiohttp.ClientSession(trust_env=True) as session:
                 async with asyncio.timeout(self.settings.chat_timeout):
-                    response = await AioGeneration.call(
+                    response = await AioMultiModalConversation.call(
                         api_key=self.settings.dashscope_api_key, model=self.name,
-                        messages=messages, tools=self.tool_definitions, tool_choice="auto",
+                        messages=multimodal_messages(messages), tools=self.tool_definitions, tool_choice="auto",
                         parallel_tool_calls=False, enable_thinking=False,
                         result_format="message", max_tokens=4096,
                         request_timeout=self.settings.chat_timeout, session=session,
@@ -49,12 +51,16 @@ class CodingModel:
             elif response.status_code == 429:
                 message = "模型服务限流或额度不足，请稍后再试"
             else:
-                message = "模型调用被拒绝，请确认 QWEN_CODING_MODEL 支持 DashScope 文本 Function Calling"
+                message = "模型调用被拒绝，请确认 QWEN_CODING_MODEL 支持 DashScope 多模态接口及 Function Calling"
             raise CodingError(message, "CODING_MODEL_REJECTED", 503)
         try:
             choice = response.output.choices[0]
             message = choice.message
             content = message.get("content") or ""
+            if isinstance(content, list):
+                if any(not isinstance(part, dict) or not isinstance(part.get("text"), str) for part in content):
+                    raise ValueError()
+                content = "\n".join(part["text"] for part in content)
             calls = message.get("tool_calls") or []
             if not isinstance(content, str) or len(content) > 40000 or not isinstance(calls, list) or len(calls) > 4:
                 raise ValueError()

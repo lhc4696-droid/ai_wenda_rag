@@ -64,7 +64,7 @@ def test_owner_grant_idempotency_and_completion(logged_in, app):
     final = store.get(owner, identifier)
     assert final["status"] == "completed"
     assert final["messages"] == final["pending_tools"] == []
-    assert "未执行" in final["summary"]
+    assert final["summary"] == "已阅读。"
 
 
 def test_cancel_rejects_late_browser_results(logged_in, app):

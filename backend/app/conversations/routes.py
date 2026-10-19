@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
+from app.chat.streaming import conversation_stream_response
 
 from app.auth.routes import require_trusted_origin, require_user
 from app.auth.schemas import UserResponse
@@ -34,5 +35,12 @@ def create_router(provider_dependency):
     @router.post("/{conversation_id}/messages", response_model=TurnResponse, summary="保存问题并生成回答；重复编号不重复保存已完成消息")
     async def send(conversation_id: UUID, data: SendMessage, request: Request, user: UserResponse = Depends(require_user), provider=Depends(provider_dependency)):
         return await request.app.state.conversation_service.send(user.id, conversation_id.hex, data, request.state.request_id, provider, request.is_disconnected)
+
+    @router.post("/{conversation_id}/messages/stream", summary="流式发送消息（实时输出）")
+    async def stream_message(conversation_id: UUID, data: SendMessage, request: Request, user: UserResponse = Depends(require_user), provider=Depends(provider_dependency)):
+        return conversation_stream_response(
+            request.app.state.conversation_service, user.id, conversation_id.hex,
+            data, request.state.request_id, provider,
+        )
 
     return router

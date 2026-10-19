@@ -11,6 +11,7 @@ import {
   watch,
 } from 'vue'
 import AppIcon from './AppIcon.vue'
+import IdeaSculpture from './IdeaSculpture.vue'
 import ChatMessage from './ChatMessage.vue'
 import AccountMenu from './AccountMenu.vue'
 import AccountSettings from './AccountSettings.vue'
@@ -1519,7 +1520,8 @@ onUnmounted(() => {
               v-if="!turns.length && !pendingQuestion && !loadingConversation"
               class="cc-welcome"
             >
-              <span class="cc-welcome-mark"><AppIcon name="spark" :size="28" /></span>
+              <IdeaSculpture compact />
+              <span class="cc-welcome-eyebrow">知言编程工作台</span>
               <h2>把想法，写进你的项目</h2>
               <p>连接一次项目目录，在同一个对话中持续创建、修改和完善代码。</p>
               <div class="cc-suggestions">
@@ -1578,6 +1580,9 @@ onUnmounted(() => {
                 ></span>
               </div>
               <p v-else class="cc-inline-status">本次操作未继续；请查看上方提示或右侧执行记录。</p>
+              <p v-if="item.status === 'completed'" class="cc-system-notice">
+                本地模式不执行命令或测试；实际文件改动请查看浏览器的修改记录。
+              </p>
               <div class="cc-turn-actions">
                 <button
                   class="cc-button"

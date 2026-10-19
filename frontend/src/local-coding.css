@@ -16,7 +16,7 @@
   grid-template-columns: minmax(0, 1fr) minmax(160px, auto) minmax(0, 1fr);
   align-items: center;
   gap: 16px;
-  min-height: 72px;
+  min-height: 78px;
   padding: 12px 22px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
@@ -44,6 +44,7 @@
   line-height: 1.5;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text);
 }
 .cc-header-title p {
   overflow: hidden;
@@ -56,6 +57,11 @@
 }
 .cc-header-leading .model-label {
   min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
 }
 .cc-header-leading .model-name {
   overflow: hidden;
@@ -72,31 +78,37 @@
   gap: 7px;
   min-height: 34px;
   padding: 7px 11px;
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
   border-radius: 9px;
-  background: transparent;
+  background: var(--surface);
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.5;
+  transition:
+    background 160ms,
+    border-color 160ms,
+    color 160ms;
 }
 .cc-icon-button {
   width: 34px;
   padding: 7px;
+  border-color: transparent;
+  background: transparent;
 }
 .cc-button {
-  border-color: var(--border);
-  background: var(--surface);
+  border-color: var(--border-strong);
 }
 .cc-icon-button:hover:not(:disabled),
 .cc-button:hover:not(:disabled),
 .cc-panel-toggle:hover:not(:disabled) {
-  border-color: var(--border);
-  background: var(--surface-hover);
-  color: var(--text);
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-hover);
 }
 .cc-panel-toggle[aria-pressed='true'] {
+  border-color: var(--accent-border);
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-hover);
 }
 .coding-chat-shell button:disabled,
 .local-consent button:disabled {
@@ -136,8 +148,8 @@
 
 /* Fixed-height columns keep the composer visible while each rail scrolls independently. */
 .cc-layout {
-  --cc-files-width: 220px;
-  --cc-process-width: 280px;
+  --cc-files-width: 244px;
+  --cc-process-width: 272px;
   position: relative;
   display: grid;
   grid-template-columns: var(--cc-files-width) minmax(0, 1fr) var(--cc-process-width);
@@ -157,7 +169,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: #fafbfd;
+  background: var(--surface-subtle);
 }
 .cc-files-panel {
   grid-column: 1;
@@ -179,8 +191,10 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  min-height: 58px;
-  padding: 14px 15px 10px;
+  min-height: 62px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
 }
 .cc-panel-header h2 {
   display: flex;
@@ -194,12 +208,16 @@
   color: var(--muted);
   font-size: 10px;
   font-weight: 400;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
 }
 .cc-panel-scroll {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 0 12px 24px;
+  padding: 0 16px 24px;
   overscroll-behavior: contain;
   scrollbar-color: var(--border-strong) transparent;
   scrollbar-width: thin;
@@ -226,7 +244,7 @@
 .cc-permission-hint {
   margin: 9px 2px 16px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.8;
   overflow-wrap: anywhere;
 }
@@ -243,6 +261,13 @@
 }
 .cc-conversation-turn {
   min-width: 0;
+}
+.cc-system-notice {
+  margin: -12px 0 20px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
 }
 .cc-turn-actions {
   display: flex;
@@ -267,12 +292,13 @@
 .cc-file-filter {
   width: 100%;
   margin: 0 0 10px;
-  padding: 8px 10px;
+  min-height: 38px;
+  padding: 9px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
   color: var(--text);
-  font-size: 11px;
+  font-size: 12px;
 }
 .cc-file-filter::placeholder {
   color: var(--muted);
@@ -288,14 +314,14 @@
   gap: 7px;
   min-width: 0;
   width: 100%;
-  min-height: 32px;
+  min-height: 34px;
   padding: 6px 7px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--text-secondary);
   font:
-    11px/1.6 'Segoe UI',
+    12px/1.6 'Segoe UI',
     'Microsoft YaHei',
     sans-serif;
   text-align: left;
@@ -338,7 +364,11 @@
   font-size: 9px;
 }
 .cc-panel-empty {
-  padding: 18px 8px;
+  margin: 10px 0;
+  padding: 16px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
   color: var(--muted);
   font-size: 11px;
   line-height: 1.9;
@@ -461,25 +491,22 @@
 .cc-welcome {
   width: min(560px, 100%);
   margin: auto;
-  padding: 48px 0;
+  padding: clamp(20px, 6vh, 60px) 0 36px;
   text-align: center;
 }
-.cc-welcome-mark {
-  display: grid;
-  place-items: center;
-  width: 54px;
-  height: 54px;
-  margin: 0 auto 22px;
-  border: 1px solid #e5eefd;
-  border-radius: 17px;
-  background: var(--accent-soft);
-  color: var(--accent);
+.cc-welcome-eyebrow {
+  display: block;
+  margin: 4px 0 18px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 1px;
 }
 .cc-welcome h2 {
   margin: 0 0 12px;
   font-size: clamp(22px, 2vw, 28px);
   font-weight: 600;
   letter-spacing: -0.6px;
+  color: var(--text);
 }
 .cc-welcome p {
   max-width: 420px;
@@ -492,22 +519,24 @@
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 9px;
-  margin-top: 26px;
+  gap: 12px;
+  margin-top: 30px;
 }
 .cc-suggestions button {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
   gap: 3px 9px;
   max-width: 100%;
-  padding: 13px 15px;
+  flex: 1 1 190px;
+  padding: 18px;
   border: 1px solid var(--border);
-  border-radius: 11px;
+  border-radius: 13px;
   background: var(--surface);
   color: var(--text-secondary);
   font-size: 11px;
   line-height: 1.6;
   text-align: left;
+  box-shadow: var(--shadow);
 }
 .cc-suggestions button > svg {
   grid-row: 1 / 3;
@@ -517,6 +546,7 @@
 .cc-suggestions button > strong {
   font-size: 12px;
   font-weight: 550;
+  color: var(--text);
 }
 .cc-suggestions button > span {
   color: var(--muted);
@@ -524,7 +554,7 @@
 .cc-suggestions button:hover:not(:disabled) {
   border-color: var(--accent-border);
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-hover);
 }
 .cc-inline-status {
   display: flex;
@@ -555,6 +585,7 @@
 .cc-dot.is-running {
   background: var(--accent);
   animation: cc-pulse 1.6s ease-in-out infinite;
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 .cc-change-card {
   display: flex;
@@ -623,6 +654,9 @@
   background: transparent;
   color: inherit;
 }
+.cc-notice button:hover {
+  background: rgba(0, 0, 0, 0.1);
+}
 .cc-notice p {
   margin: 0;
 }
@@ -635,7 +669,7 @@
   max-width: 856px;
   margin: 0 auto;
   padding: 12px 28px 15px;
-  background: var(--surface);
+  background: transparent;
 }
 .cc-composer-dock > .cc-notice {
   margin-bottom: 10px;
@@ -646,14 +680,18 @@
   border: 1px solid var(--border-strong);
   border-radius: 18px;
   background: var(--surface);
-  box-shadow: 0 6px 24px #10182806;
+  box-shadow:
+    0 8px 32px #34365608,
+    0 2px 6px #34365604;
   transition:
-    border-color 0.18s,
-    box-shadow 0.18s;
+    border-color 160ms,
+    box-shadow 160ms;
 }
 .cc-composer:focus-within {
-  border-color: var(--accent-border);
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 3px var(--focus-ring),
+    var(--shadow);
 }
 .cc-composer textarea {
   display: block;
@@ -723,19 +761,21 @@
   margin-left: auto;
   border: 0;
   border-radius: 11px;
-  background: var(--accent);
+  background: var(--graphite);
   color: #fff;
+  transition: background 160ms;
 }
 .cc-send-button:hover:not(:disabled) {
   background: var(--accent-hover);
 }
 .cc-send-button.is-stop {
-  background: var(--text);
+  background: var(--danger);
 }
 .coding-chat-shell .cc-send-button:disabled {
   opacity: 1;
   background: var(--surface-hover);
   color: #98a2b3;
+  box-shadow: none;
 }
 .cc-composer-disclaimer {
   display: flex;
@@ -1079,6 +1119,8 @@
   }
   .cc-process-panel {
     position: absolute;
+    grid-column: auto;
+    grid-row: auto;
     z-index: 20;
     inset: 0 0 0 auto;
     width: min(320px, calc(100% - 36px));
@@ -1153,6 +1195,8 @@
   }
   .cc-files-panel {
     position: absolute;
+    grid-column: auto;
+    grid-row: auto;
     z-index: 20;
     inset: 0 auto 0 0;
     width: min(300px, calc(100% - 36px));
@@ -1182,11 +1226,6 @@
   }
   .cc-welcome {
     padding: 24px 0;
-  }
-  .cc-welcome-mark {
-    width: 46px;
-    height: 46px;
-    margin-bottom: 18px;
   }
   .cc-suggestions {
     margin-top: 20px;
@@ -1260,8 +1299,9 @@
 .cc-project-label {
   display: block;
   margin-bottom: 7px;
-  color: var(--text-secondary, #64748b);
+  color: var(--text-secondary);
   font-size: 12px;
+  font-weight: 600;
 }
 
 .cc-project-select {
@@ -1269,15 +1309,20 @@
   min-width: 0;
   padding: 9px 10px;
   margin-bottom: 8px;
-  border: 1px solid var(--border, #dce2eb);
+  border: 1px solid var(--border-strong);
   border-radius: 10px;
   color: inherit;
-  background: var(--surface, #fff);
+  background: var(--surface);
   font: inherit;
   font-size: 13px;
+  transition: border-color 160ms;
 }
 
 .cc-project-select:focus-visible {
-  outline: 2px solid #4272f5;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+.cc-project-select:hover {
+  border-color: var(--accent);
 }

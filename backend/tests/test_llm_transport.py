@@ -23,19 +23,21 @@ def test_async_sdk_receives_timeout_budget_and_explicit_session(app, monkeypatch
         captured.update(kwargs)
         return SimpleNamespace(status_code=200, usage={"input_tokens": 2, "output_tokens": 3}, output=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="回答"), finish_reason="stop")]))
     monkeypatch.setattr(aiohttp, "ClientSession", Session)
-    monkeypatch.setattr(dashscope.AioGeneration, "call", call)
+    monkeypatch.setattr(dashscope.AioMultiModalConversation, "call", call)
     settings = replace(app.state.settings, dashscope_api_key="test-only-key")
     answer = asyncio.run(DashScopeLLM(settings).chat([]))
     assert answer.content == "回答" and answer.input_tokens == 2
     assert captured["request_timeout"] == 90 and captured["max_tokens"] == 2048
     assert isinstance(captured["session"], Session) and captured["closed"]
+    assert captured["enable_thinking"] is False
+    assert isinstance(captured["messages"][0]["content"], list)
 
 
 def test_upstream_error_text_is_not_returned(app, monkeypatch):
     import dashscope
     async def rejected(**kwargs):
         return SimpleNamespace(status_code=403, message="private-upstream-value")
-    monkeypatch.setattr(dashscope.AioGeneration, "call", rejected)
+    monkeypatch.setattr(dashscope.AioMultiModalConversation, "call", rejected)
     with pytest.raises(LLMError) as error:
         asyncio.run(DashScopeLLM(replace(app.state.settings, dashscope_api_key="test-only-key")).chat([]))
     assert error.value.code == "LLM_AUTH_FAILED"
@@ -53,7 +55,7 @@ def test_smtp_classifies_errors_without_provider_text(error, code):
 
 
 def test_placeholder_host_is_rejected_without_connecting(app):
-    settings = replace(app.state.settings, smtp_host="smtp.example.com", smtp_username="sender", smtp_password="secret", smtp_from="sender@example.com")
+    settings = replace(app.state.settings, smtp=replace(app.state.settings.smtp, host="smtp.example.com", username="sender", password="secret", from_address="sender@example.com"))
     with pytest.raises(EmailUnavailable) as error:
         SMTPMailer(settings).ensure_ready()
     assert error.value.code == "SMTP_PLACEHOLDER_HOST"
@@ -67,5 +69,5 @@ def test_smtp_quit_failure_does_not_invalidate_accepted_mail(app, monkeypatch):
         def login(self, *args): pass
         def send_message(self, message): return {}
     monkeypatch.setattr(smtplib, "SMTP_SSL", Connection)
-    settings = replace(app.state.settings, smtp_host="smtp.test.invalid", smtp_username="sender", smtp_password="secret", smtp_from="sender@example.com")
+    settings = replace(app.state.settings, smtp=replace(app.state.settings.smtp, host="smtp.test.invalid", username="sender", password="secret", from_address="sender@example.com"))
     SMTPMailer(settings).send_code("recipient@example.com", "345678", "register", 300)
