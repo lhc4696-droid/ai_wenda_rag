@@ -1,0 +1,23 @@
+{
+  "allowed": [
+    "src/main.py", "src/App.vue", "src/main.kt", "src/build.kts",
+    "src/app.svelte", "src/main.go", "src/main.rs", "src/Main.java",
+    "src/main.cpp", "src/main.cs", "scripts/start.sh", "README.md",
+    "Dockerfile", ".gitignore", ".dockerignore", "config/settings.yaml"
+  ],
+  "blocked": [
+    ".docker/config.json", ".kube/config.yaml", "nested/.DOCKER/config.json",
+    "nested/tools/.KuBe/config.yaml", ".codex/config.toml", ".agents/instructions.md",
+    "nested/.CODEX/config.toml", "nested/.AGENTS/instructions.md",
+    ".ssh/config.txt", ".aws/config.ini", ".git/config.json", ".svn/config.json",
+    ".hg/config.json", "venv/main.py", ".venv/main.py", "node_modules/main.js",
+    "__pycache__/main.py", ".idea/config.xml", ".vscode/settings.json",
+    "dist/main.js", "build/main.js", "data/config.json", ".next/main.js", ".nuxt/main.js",
+    ".env", "nested/.ENV.local", "nested/.env.production/settings.json",
+    "src/credentials.json", "src/secrets.yml", "src/TOKEN.txt", "src/api-key.py",
+    "src/private_key.json", ".npmrc", ".pypirc", ".netrc", "id_ed25519",
+    "image.png", "private.pem", "../main.py", "/main.py", "C:/main.py",
+    "src\\main.py", "src/../main.py", "src//main.py", "src/./main.py",
+    "src/CON.py", "src/main.py.", "src/main.py ", "src/bad\u0000.py"
+  ]
+}

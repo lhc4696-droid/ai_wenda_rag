@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="800" height="600">
+  <!-- 背景 -->
+  <rect width="800" height="600" fill="#87CEEB"/>
+
+  <!-- 地面 -->
+  <rect x="0" y="480" width="800" height="120" fill="#90EE90"/>
+
+  <!-- 云朵 -->
+  <ellipse cx="150" cy="100" rx="40" ry="25" fill="white" opacity="0.8"/>
+  <ellipse cx="180" cy="100" rx="50" ry="30" fill="white" opacity="0.8"/>
+  <ellipse cx="210" cy="100" rx="40" ry="25" fill="white" opacity="0.8"/>
+
+  <ellipse cx="600" cy="80" rx="35" ry="20" fill="white" opacity="0.8"/>
+  <ellipse cx="625" cy="80" rx="40" ry="25" fill="white" opacity="0.8"/>
+  <ellipse cx="650" cy="80" rx="35" ry="20" fill="white" opacity="0.8"/>
+
+  <!-- 自行车 -->
+  <g id="bicycle" transform="translate(300, 350)">
+    <!-- 后轮 -->
+    <circle cx="50" cy="100" r="45" fill="none" stroke="#333" stroke-width="8"/>
+    <circle cx="50" cy="100" r="35" fill="none" stroke="#666" stroke-width="2"/>
+    <line x1="50" y1="100" x2="80" y2="70" stroke="#333" stroke-width="3"/>
+    <line x1="50" y1="100" x2="20" y2="70" stroke="#333" stroke-width="3"/>
+    <line x1="50" y1="100" x2="50" y2="55" stroke="#333" stroke-width="3"/>
+
+    <!-- 前轮 -->
+    <circle cx="200" cy="100" r="45" fill="none" stroke="#333" stroke-width="8"/>
+    <circle cx="200" cy="100" r="35" fill="none" stroke="#666" stroke-width="2"/>
+    <line x1="200" y1="100" x2="230" y2="70" stroke="#333" stroke-width="3"/>
+    <line x1="200" y1="100" x2="170" y2="70" stroke="#333" stroke-width="3"/>
+    <line x1="200" y1="100" x2="200" y2="55" stroke="#333" stroke-width="3"/>
+
+    <!-- 车架 -->
+    <line x1="50" y1="100" x2="125" y2="30" stroke="#FF6B35" stroke-width="6"/>
+    <line x1="125" y1="30" x2="200" y2="100" stroke="#FF6B35" stroke-width="6"/>
+    <line x1="50" y1="100" x2="125" y2="100" stroke="#FF6B35" stroke-width="6"/>
+    <line x1="125" y1="100" x2="200" y2="100" stroke="#FF6B35" stroke-width="6"/>
+    <line x1="125" y1="30" x2="125" y2="100" stroke="#FF6B35" stroke-width="6"/>
+
+    <!-- 车把 -->
+    <line x1="200" y1="100" x2="200" y2="30" stroke="#333" stroke-width="5"/>
+    <line x1="190" y1="30" x2="210" y2="30" stroke="#333" stroke-width="5"/>
+
+    <!-- 座位 -->
+    <ellipse cx="125" cy="25" rx="25" ry="8" fill="#4A4A4A"/>
+
+    <!-- 脚踏板 -->
+    <circle cx="125" cy="100" r="8" fill="#666"/>
+    <rect x="115" y="105" width="20" height="5" fill="#333"/>
+  </g>
+
+  <!-- 鹈鹕 -->
+  <g id="pelican" transform="translate(380, 280)">
+    <!-- 身体 -->
+    <ellipse cx="50" cy="50" rx="45" ry="55" fill="#F0E68C"/>
+    <ellipse cx="50" cy="50" rx="40" ry="50" fill="#FFE4B5"/>
+
+    <!-- 翅膀 -->
+    <ellipse cx="25" cy="45" rx="20" ry="35" fill="#DEB887" transform="rotate(-20 25 45)"/>
+    <ellipse cx="75" cy="45" rx="20" ry="35" fill="#DEB887" transform="rotate(20 75 45)"/>
+
+    <!-- 头部 -->
+    <circle cx="50" cy="15" r="25" fill="#F0E68C"/>
+    <circle cx="50" cy="15" r="22" fill="#FFE4B5"/>
+
+    <!-- 眼睛 -->
+    <circle cx="45" cy="10" r="5" fill="white"/>
+    <circle cx="45" cy="10" r="3" fill="black"/>
+    <circle cx="44" cy="9" r="1.5" fill="white"/>
+
+    <!-- 大嘴袋 -->
+    <path d="M 50 20 Q 80 25 85 45 Q 80 50 70 52 Q 60 53 50 50 Z"
+          fill="#FFA07A" stroke="#FF8C69" stroke-width="2"/>
+    <path d="M 50 20 Q 80 25 85 45 Q 82 35 75 30 Q 65 25 50 23 Z"
+          fill="#FFB6A3" opacity="0.7"/>
+
+    <!-- 上喙 -->
+    <path d="M 50 15 Q 70 18 85 20 L 85 25 Q 70 23 50 20 Z"
+          fill="#FF8C42" stroke="#FF7F2E" stroke-width="1.5"/>
+
+    <!-- 腿部（骑车姿势） -->
+    <g id="legs">
+      <!-- 左腿 -->
+      <line x1="45" y1="90" x2="40" y2="120" stroke="#FFA500" stroke-width="5" stroke-linecap="round"/>
+      <line x1="40" y1="120" x2="45" y2="145" stroke="#FFA500" stroke-width="5" stroke-linecap="round"/>
+      <!-- 脚 -->
+      <ellipse cx="48" cy="148" rx="8" ry="4" fill="#FF8C00"/>
+
+      <!-- 右腿 -->
+      <line x1="55" y1="90" x2="60" y2="115" stroke="#FFA500" stroke-width="5" stroke-linecap="round"/>
+      <line x1="60" y1="115" x2="55" y2="140" stroke="#FFA500" stroke-width="5" stroke-linecap="round"/>
+      <!-- 脚 -->
+      <ellipse cx="52" cy="143" rx="8" ry="4" fill="#FF8C00"/>
+    </g>
+
+    <!-- 尾巴 -->
+    <path d="M 10 60 Q 0 65 5 75 Q 10 80 15 75 Q 12 65 10 60 Z"
+          fill="#DEB887"/>
+  </g>
+
+  <!-- 装饰性元素 - 速度线 -->
+  <line x1="250" y1="320" x2="200" y2="320" stroke="#999" stroke-width="2" opacity="0.5"/>
+  <line x1="260" y1="340" x2="220" y2="340" stroke="#999" stroke-width="2" opacity="0.5"/>
+  <line x1="255" y1="360" x2="215" y2="360" stroke="#999" stroke-width="2" opacity="0.5"/>
+
+  <!-- 文字标题 -->
+  <text x="400" y="550" font-family="Arial, sans-serif" font-size="32" font-weight="bold"
+        text-anchor="middle" fill="#2C5F2D">
+    鹈鹕骑车
+  </text>
+</svg>

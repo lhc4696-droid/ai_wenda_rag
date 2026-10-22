@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>投骰子</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 32px;
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #fff;
+  }
+  h1 { font-size: 2rem; letter-spacing: 2px; }
+  .dice-wrap {
+    perspective: 800px;
+    width: 140px;
+    height: 140px;
+  }
+  .die {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    transform-style: preserve-3d;
+    transition: transform 0.9s cubic-bezier(.2,.8,.3,1.2);
+  }
+  .face {
+    position: absolute;
+    inset: 0;
+    background: #fff;
+    border-radius: 18px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    padding: 16px;
+    box-shadow: inset 0 0 12px rgba(0,0,0,.15);
+    backface-visibility: hidden;
+  }
+  .dot {
+    width: 22px;
+    height: 22px;
+    background: #2b2b2b;
+    border-radius: 50%;
+    align-self: center;
+    justify-self: center;
+  }
+  /* 六个面分别定位到立方体各方向 */
+  .f1 { transform: translateZ(70px); }
+  .f2 { transform: rotateY(180deg) translateZ(70px); }
+  .f3 { transform: rotateY(90deg) translateZ(70px); }
+  .f4 { transform: rotateY(-90deg) translateZ(70px); }
+  .f5 { transform: rotateX(90deg) translateZ(70px); }
+  .f6 { transform: rotateX(-90deg) translateZ(70px); }
+  button {
+    font-size: 1.2rem;
+    padding: 14px 40px;
+    border: none;
+    border-radius: 30px;
+    cursor: pointer;
+    background: #ffd166;
+    color: #4a3b00;
+    font-weight: bold;
+    box-shadow: 0 6px 0 #e0a800;
+    transition: transform .1s, box-shadow .1s;
+  }
+  button:active { transform: translateY(4px); box-shadow: 0 2px 0 #e0a800; }
+  button:disabled { opacity: .6; cursor: not-allowed; }
+  .result { font-size: 1.6rem; min-height: 1.6em; }
+</style>
+</head>
+<body>
+  <h1>🎲 投骰子</h1>
+  <div class="dice-wrap">
+    <div class="die" id="die"></div>
+  </div>
+  <button id="rollBtn">投掷</button>
+  <div class="result" id="result">点击按钮开始</div>
+
+<script>
+  // 每个面上点的位置（用 3x3 网格坐标，1..9）
+  const dotLayout = {
+    1: [5],
+    2: [1, 9],
+    3: [1, 5, 9],
+    4: [1, 3, 7, 9],
+    5: [1, 3, 5, 7, 9],
+    6: [1, 3, 4, 6, 7, 9]
+  };
+  // 让某个点数朝向观察者所需的旋转角度
+  const faceRotation = {
+    1: [0, 0],      // f1 正面
+    2: [0, 180],    // f2 背面
+    3: [0, -90],    // f3 右
+    4: [0, 90],     // f4 左
+    5: [-90, 0],    // f5 上
+    6: [90, 0]      // f6 下
+  };
+
+  const die = document.getElementById('die');
+  const btn = document.getElementById('rollBtn');
+  const result = document.getElementById('result');
+
+  // 构建六个面
+  for (let n = 1; n <= 6; n++) {
+    const face = document.createElement('div');
+    face.className = 'face f' + n;
+    dotLayout[n].forEach(pos => {
+      const d = document.createElement('span');
+      d.className = 'dot';
+      d.style.gridRowStart = Math.ceil(pos / 3);
+      d.style.gridColumnStart = ((pos - 1) % 3) + 1;
+      face.appendChild(d);
+    });
+    die.appendChild(face);
+  }
+
+  let rolling = false;
+  let spins = 0;
+
+  function roll() {
+    if (rolling) return;
+    rolling = true;
+    btn.disabled = true;
+    result.textContent = '骰子滚动中…';
+
+    const value = Math.floor(Math.random() * 6) + 1;
+    // 在目标角度基础上叠加若干整圈，制造翻滚效果
+    spins += 360 * (2 + Math.floor(Math.random() * 2));
+    const [rx, ry] = faceRotation[value];
+    die.style.transform = `rotateX(${rx + spins}deg) rotateY(${ry + spins}deg)`;
+
+    setTimeout(() => {
+      rolling = false;
+      btn.disabled = false;
+      result.textContent = '你投出了：' + value + ' 点';
+    }, 900);
+  }
+
+  btn.addEventListener('click', roll);
+</script>
+</body>
+</html>
