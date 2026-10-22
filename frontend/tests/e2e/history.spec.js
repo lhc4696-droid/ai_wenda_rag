@@ -22,7 +22,7 @@ test('两场对话切换、刷新恢复、改名和确认删除', async ({ page 
   await input.press('Enter')
   await expect(page.locator('.message--assistant')).toContainText('第一场对话')
   await navigation()
-  await page.getByRole('button', { name: '新建对话', exact: true }).click()
+  await page.getByRole('button', { name: /^新建对话/ }).click()
   await input.fill('第二场对话')
   await input.press('Enter')
   await expect(page.locator('.message--assistant')).toContainText('第二场对话')

@@ -3,53 +3,21 @@
 import asyncio
 import json
 import logging
-import time
-from uuid import uuid4
-
-from app.chat.store import ChatLimit
 from .model import CodingModel
 from .prompts import SYSTEM_PROMPT
 from .sandbox import DockerSandbox
 from .schemas import CodingError, TERMINAL_STATUSES
 from .tools import CodingTools
+from .runtime import CodingRuntime, database_call
 
 
 logger = logging.getLogger(__name__)
 
 
-async def database_call(function, *args, **kwargs):
-    """Drain atomic DB writes before cancellation; never leave a late write behind."""
-    worker = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
-    try:
-        return await asyncio.shield(worker)
-    except asyncio.CancelledError:
-        try:
-            await asyncio.shield(worker)
-        except Exception:
-            pass
-        raise
-
-
-class CodingService:
+class CodingService(CodingRuntime):
     def __init__(self, store, model_calls, settings):
-        self.store, self.model_calls, self.settings = store, model_calls, settings
+        super().__init__(store, model_calls, settings)
         self.model, self.sandbox = CodingModel(settings), DockerSandbox(settings)
-        self.tasks, self.started = {}, set()
-        self.closing = False
-
-    def launch(self, user_id, task_id):
-        if task_id not in self.tasks:
-            worker = asyncio.create_task(self._run(user_id, task_id), name=f"coding-{task_id}")
-            self.tasks[task_id] = worker
-            worker.add_done_callback(lambda done: self._done(task_id, done))
-
-    def _done(self, task_id, worker):
-        if self.tasks.get(task_id) is worker:
-            self.tasks.pop(task_id, None)
-            self.started.discard(task_id)
-        if not worker.cancelled() and worker.exception() is not None:
-            # Do not log source code, provider responses or credentials.
-            logger.error("Coding task persistence failed task=%s category=%s", task_id, type(worker.exception()).__name__)
 
     async def cancel(self, user_id, task_id):
         task = await database_call(self.store.request_cancel, user_id, task_id)
@@ -57,50 +25,6 @@ class CodingService:
         if worker and not worker.cancelling() and task_id in self.started and task["status"] not in TERMINAL_STATUSES:
             worker.cancel()
         return task
-
-    async def shutdown(self):
-        self.closing = True
-        running = list(self.tasks.items())
-        for identifier, worker in running:
-            if identifier in self.started and not worker.cancelling():
-                worker.cancel()
-        await asyncio.gather(*(worker for _, worker in running), return_exceptions=True)
-
-    async def _model_call(self, user_id, messages, model=None):
-        # A per-call provider keeps different accounts' keys and endpoints isolated.
-        model = model if model is not None else self.model
-        input_size = len(json.dumps(messages, ensure_ascii=False))
-        if input_size > 80000:
-            raise CodingError("任务上下文达到上限，修改已保留；请缩小范围或从当前结果继续新任务", "CODING_CONTEXT_LIMIT")
-        identifier, start = uuid4().hex, time.monotonic()
-        state, code, reply = "failed", None, None
-        try:
-            while True:
-                try:
-                    await database_call(self.model_calls.reserve, identifier, user_id, input_size, self.settings, model.name)
-                    break
-                except ChatLimit as exc:
-                    if exc.code in {"CHAT_RATE_LIMIT", "CHAT_USER_BUSY", "CHAT_SERVER_BUSY"}:
-                        await asyncio.sleep(min(exc.retry_after, 60))
-                        continue
-                    raise CodingError(str(exc), exc.code, 429) from None
-            reply = await model.call(messages)
-            state = "succeeded"
-            return reply
-        except asyncio.CancelledError:
-            state, code = "cancelled", "CODING_CANCELLED"
-            raise
-        except CodingError as exc:
-            state = "timed_out" if exc.code == "CODING_MODEL_TIMEOUT" else "failed"
-            code = exc.code
-            raise
-        finally:
-            await database_call(
-                self.model_calls.finish, identifier, state, int((time.monotonic() - start) * 1000),
-                output_chars=len(reply.content) if reply else None,
-                input_tokens=reply.input_tokens if reply else None,
-                output_tokens=reply.output_tokens if reply else None, error_code=code,
-            )
 
     async def _run(self, user_id, task_id):
         self.started.add(task_id)

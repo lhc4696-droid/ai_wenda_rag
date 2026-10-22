@@ -7,24 +7,25 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   --surface: #ffffff;
-  --surface-subtle: #f7f8fa;
-  --surface-hover: #f0f2f5;
-  --text: #18181b;
-  --text-secondary: #475467;
-  --muted: #667085;
-  --border: #e5e7eb;
-  --border-strong: #d0d5dd;
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
-  --accent-soft: #eff6ff;
-  --accent-border: #bfdbfe;
-  --focus-ring: #2563eb1f;
+  --surface-subtle: #f7f8fc;
+  --surface-hover: #eef0f7;
+  --text: #232838;
+  --text-secondary: #50596d;
+  --muted: #626b7e;
+  --border: #e6e8f0;
+  --border-strong: #cdd2e1;
+  --accent: #6355cf;
+  --accent-hover: #5042b5;
+  --accent-soft: #f0edfc;
+  --accent-border: #d7cff5;
+  --focus-ring: #6355cf1a;
+  --graphite: #1c2233;
   --danger: #b42318;
   --danger-soft: #fef3f2;
   --danger-border: #fecaca;
   --warning: #92400e;
   --warning-soft: #fffbeb;
-  --shadow: 0 8px 30px #1018280a;
+  --shadow: 0 8px 28px #232d4d08, 0 2px 5px #232d4d04;
 }
 * {
   box-sizing: border-box;
@@ -64,7 +65,7 @@ button svg {
   flex-shrink: 0;
 }
 ::selection {
-  background: #dbeafe;
+  background: var(--accent-border);
   color: var(--text);
 }
 .app-shell {
@@ -74,11 +75,11 @@ button svg {
   overflow: hidden;
 }
 .sidebar {
-  width: 240px;
+  width: 252px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  padding: 28px 18px 0;
+  padding: 28px 20px 0;
   background: var(--surface-subtle);
   border-right: 1px solid var(--border);
 }
@@ -96,7 +97,7 @@ button svg {
   place-items: center;
   width: 38px;
   height: 38px;
-  background: var(--text);
+  background: var(--graphite);
   border-radius: 12px;
   color: var(--surface);
 }
@@ -113,17 +114,29 @@ button svg {
   align-items: center;
   gap: 10px;
   width: 100%;
-  margin: 32px 0;
+  flex-shrink: 0;
+  margin: 30px 0 10px;
   padding: 13px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
+  border-radius: 12px;
+  border: 1px solid var(--graphite);
+  background: var(--graphite);
+  color: #fff;
+  box-shadow: 0 4px 10px #1c223310;
   font-size: 13px;
   font-weight: 550;
 }
 .new-chat-button:hover {
-  border-color: var(--accent-border);
-  background: var(--accent-soft);
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.new-chat-button .button-arrow {
+  color: #d4d7e6;
+}
+.sidebar .history-heading {
+  flex-shrink: 0;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
 }
 .button-arrow {
   margin-left: auto;
@@ -201,7 +214,7 @@ button svg {
   min-width: 0;
 }
 .topbar {
-  min-height: 76px;
+  min-height: 78px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -243,6 +256,18 @@ button svg {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.topbar .model-label {
+  width: fit-content;
+  max-width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.model-label > svg {
+  color: var(--accent);
+}
 .model-label svg {
   flex-shrink: 0;
 }
@@ -274,7 +299,7 @@ button svg {
   flex-shrink: 0;
 }
 .connected .status-dot {
-  background: var(--accent);
+  background: #43836d;
 }
 .disconnected {
   color: var(--warning);
@@ -288,11 +313,13 @@ button svg {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  background: radial-gradient(ellipse at 50% 16%, #f0edfc80, transparent 54%), var(--surface);
 }
 .welcome {
   width: min(780px, calc(100% - 80px));
   margin: auto auto 0;
-  padding-top: 48px;
+  padding-top: clamp(28px, 5vh, 64px);
+  text-align: center;
 }
 .welcome-eyebrow {
   display: flex;
@@ -300,15 +327,8 @@ button svg {
   gap: 10px;
   color: var(--muted);
   font-size: 12px;
-}
-.welcome-symbol {
-  width: 40px;
-  height: 40px;
-  color: var(--accent);
-  border-radius: 12px;
-  display: grid;
-  place-items: center;
-  background: var(--accent-soft);
+  justify-content: center;
+  letter-spacing: 1px;
 }
 h1 {
   font-size: clamp(30px, 3vw, 42px);
@@ -331,7 +351,7 @@ h1 span {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
-  margin: 30px 0 26px;
+  margin: 32px 0 26px;
 }
 .suggestion-card {
   text-align: left;
@@ -340,9 +360,10 @@ h1 span {
   align-items: flex-start;
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 14px;
   background: var(--surface);
-  padding: 18px 16px;
+  padding: 20px 18px;
+  box-shadow: 0 2px 6px #232d4d03;
 }
 .suggestion-card:hover {
   background: var(--surface-subtle);
@@ -350,8 +371,22 @@ h1 span {
   box-shadow: var(--shadow);
 }
 .suggestion-icon {
-  color: var(--text-secondary);
-  margin-bottom: 16px;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  margin-bottom: 18px;
+}
+.suggestion-card:nth-child(2) .suggestion-icon {
+  background: #edf3f7;
+  color: #46748a;
+}
+.suggestion-card:nth-child(3) .suggestion-icon {
+  background: #f8f0e8;
+  color: #9e7146;
 }
 .suggestion-title {
   display: flex;
@@ -379,7 +414,9 @@ h1 span {
 .composer {
   background: var(--surface);
   border: 1px solid var(--border-strong);
-  box-shadow: var(--shadow);
+  box-shadow:
+    0 8px 32px #34365608,
+    0 2px 6px #34365604;
   border-radius: 18px;
   padding: 20px 20px 12px;
   transition:
@@ -388,7 +425,9 @@ h1 span {
 }
 .composer:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  box-shadow:
+    0 0 0 3px var(--focus-ring),
+    var(--shadow);
 }
 .composer textarea {
   width: 100%;
@@ -437,7 +476,7 @@ h1 span {
   flex-shrink: 0;
   border-radius: 11px;
   color: #fff;
-  background: var(--accent);
+  background: var(--graphite);
   margin-left: auto;
 }
 .send-button:hover:not(:disabled) {
@@ -465,6 +504,7 @@ h1 span {
 }
 .workspace.has-messages {
   overflow: hidden;
+  background: var(--surface);
 }
 .has-messages .composer-area {
   margin: 0 auto;
@@ -509,7 +549,7 @@ h1 span {
   max-width: 86%;
   border-radius: 16px 4px 16px 16px;
   padding: 13px 18px;
-  background: var(--surface-hover);
+  background: var(--accent-soft);
   color: var(--text);
   font-size: 15px;
   line-height: 1.85;
@@ -581,6 +621,7 @@ h1 span {
   border-radius: 10px;
   padding: 18px;
   line-height: 1.7;
+  scrollbar-width: thin;
 }
 .markdown-body code {
   font-family: Consolas, monospace;
@@ -849,6 +890,11 @@ h1 span {
     padding: 14px 10px;
   }
   .suggestion-icon {
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+  }
+  .suggestion-icon {
     margin-bottom: 12px;
   }
   .suggestion-title {
@@ -903,6 +949,35 @@ h1 span {
   }
   h1 {
     font-size: 28px;
+  }
+}
+@media (max-height: 620px) {
+  .sidebar {
+    padding-top: 16px;
+  }
+  .new-chat-button {
+    margin-top: 18px;
+    padding-top: 11px;
+    padding-bottom: 11px;
+  }
+  .sidebar .history-heading {
+    margin-top: 14px;
+    padding-top: 10px;
+  }
+  .sidebar-bottom {
+    padding-top: 8px;
+  }
+  .session-note {
+    padding: 12px 8px;
+  }
+  .session-note br,
+  .session-note small {
+    display: none;
+  }
+}
+@media (max-height: 480px) {
+  .sidebar-bottom {
+    display: none;
   }
 }
 @media (prefers-reduced-motion: reduce) {

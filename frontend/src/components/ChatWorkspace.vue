@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import AppIcon from './AppIcon.vue'
+import IdeaSculpture from './IdeaSculpture.vue'
 import ChatMessage from './ChatMessage.vue'
 import AccountSettings from './AccountSettings.vue'
 import AccountMenu from './AccountMenu.vue'
@@ -29,6 +30,8 @@ const {
   retrySeconds,
   canSend,
   send,
+  stop,
+  stopAll,
   chooseRoute,
   cancelRouteChoice,
   setSourceMode,
@@ -207,7 +210,13 @@ function revealConversation(element) {
 }
 
 watch(
-  [() => current.value?.id, () => messages.value.length, () => isLoading.value, () => error.value],
+  [
+    () => current.value?.id,
+    () => messages.value.length,
+    () => messages.value.at(-1)?.content.length,
+    () => isLoading.value,
+    () => error.value,
+  ],
   async () => {
     if (prependingId && prependingId === current.value?.id) return
     if (opening.value) return
@@ -219,7 +228,10 @@ watch(
     if (opening.value || current.value?.id !== id || !thread.value) return
     if (displayedConversationId !== id) {
       revealConversation()
-    } else if (wasNearBottom || messages.value.at(-1)?.local) {
+    } else if (
+      wasNearBottom ||
+      (messages.value.at(-1)?.local && !messages.value.at(-1)?.streaming)
+    ) {
       const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
       thread.value.scrollTo({
         top: thread.value.scrollHeight,
@@ -232,10 +244,12 @@ watch(
 onMounted(() => {
   refreshHealth()
   initialize()
+  window.addEventListener('pagehide', stopAll)
   window.addEventListener('focus', loadCapabilities)
   window.addEventListener('zhiyan-model-settings-updated', loadCapabilities)
 })
 onUnmounted(() => {
+  window.removeEventListener('pagehide', stopAll)
   window.removeEventListener('focus', loadCapabilities)
   window.removeEventListener('zhiyan-model-settings-updated', loadCapabilities)
   dispose()
@@ -454,10 +468,8 @@ function modelSettingsUpdated() {
               class="welcome"
               aria-labelledby="welcome-heading"
             >
-              <div class="welcome-eyebrow">
-                <span class="welcome-symbol"><AppIcon name="spark" :size="28" /></span>
-                知言 AI · 你的思考伙伴
-              </div>
+              <IdeaSculpture compact />
+              <div class="welcome-eyebrow">知言 AI · 你的思考伙伴</div>
               <h1 id="welcome-heading">今天想聊些什么？</h1>
               <p class="welcome-description">解答疑惑、整理思路，或把一个想法变成文字。</p>
               <div class="suggestions">
@@ -492,7 +504,10 @@ function modelSettingsUpdated() {
             >
               <div class="thread-inner">
                 <div class="conversation-date">
-                  {{ current?.last_sequence || messages.length }} 条已保存消息
+                  <template v-if="submitting">正在生成，回答完成后保存</template>
+                  <template v-else>
+                    {{ current?.last_sequence ?? messages.length }} 条已保存消息
+                  </template>
                 </div>
                 <button
                   v-if="nextBefore"
@@ -507,8 +522,16 @@ function modelSettingsUpdated() {
                 <div v-if="isLoading" class="pending-message" role="status">
                   <span class="mini-brand"><AppIcon name="spark" :size="17" /></span>
                   <span>
-                    {{ submitting ? '正在思考' : '回答正在处理中，将自动更新' }}
-                    <small class="pending-hint">切换会话将停止本页等待，已保存的消息会保留。</small>
+                    {{
+                      submitting
+                        ? messages.at(-1)?.streaming
+                          ? '正在生成…'
+                          : '正在准备回答…'
+                        : '回答正在处理中，将自动更新'
+                    }}
+                    <small class="pending-hint">
+                      切换会话后仍会继续生成；点击停止或退出页面才会取消。
+                    </small>
                   </span>
                   <span class="thinking-dots">
                     <i></i>
@@ -637,6 +660,17 @@ function modelSettingsUpdated() {
                 {{ draft.length }} / {{ MAX_MESSAGE_LENGTH }}
               </span>
               <button
+                v-if="submitting"
+                type="button"
+                class="send-button"
+                aria-label="停止生成"
+                title="停止生成"
+                @click="stop"
+              >
+                <AppIcon name="stop" :size="20" />
+              </button>
+              <button
+                v-else
                 type="submit"
                 class="send-button"
                 :disabled="!canSend || signingOut"

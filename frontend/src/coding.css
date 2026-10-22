@@ -1,4 +1,4 @@
-.coding-entry { display:flex; align-items:center; gap:10px; width:100%; margin:-18px 0 24px; padding:11px 14px; border:0; border-radius:9px; background:transparent; text-align:left; font-size:13px; color:var(--text-secondary); }
+.coding-entry { display:flex; flex-shrink:0; align-items:center; gap:10px; width:100%; margin:0; padding:12px 14px; border:1px solid var(--border); border-radius:12px; background:var(--surface); text-align:left; font-size:13px; color:var(--text-secondary); }
 .coding-entry:hover { background:var(--accent-soft); color:var(--accent); }
 .coding-entry-code { font-family:Consolas,monospace; font-weight:700; color:var(--accent); }
 .coding-shell { height:100dvh; min-height:400px; display:flex; flex-direction:column; background:var(--surface); }

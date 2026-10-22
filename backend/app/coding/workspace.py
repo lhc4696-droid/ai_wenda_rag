@@ -1,4 +1,4 @@
-"""Validate source ZIPs entirely in memory; never extract user archives on the host."""
+"""Validate portable source paths and legacy ZIPs without accessing host files."""
 
 from io import BytesIO
 from pathlib import PurePosixPath
@@ -26,6 +26,10 @@ FILENAMES = {"dockerfile", "containerfile", "makefile", "license", "licence", "r
 SECRET_NAMES = {"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "credentials", "credentials.json", "secrets.json", "secrets.yaml", "secrets.yml", ".pypirc", ".npmrc", ".netrc"}
 SECRET_STEMS = {"api_key", "api-key", "apikey", "secret", "secrets", "token", "access_token", "private_key", "private-key"}
 RESERVED_WINDOWS = re.compile(r"^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$", re.I)
+# Browser-local coding supports more languages than the retired ZIP workflow.
+# Keep this policy aligned with frontend/src/lib/local-files.js.
+LOCAL_EXCLUDED_DIRS = EXCLUDED_DIRS | {".docker", ".kube", ".codex", ".agents", ".vscode", "data", ".next", ".nuxt"}
+LOCAL_EXTENSIONS = EXTENSIONS | {".vue", ".svelte", ".scss", ".less", ".go", ".rs", ".java", ".kt", ".kts", ".c", ".h", ".cpp", ".hpp", ".cs", ".sh"}
 
 
 def validate_path(path: str) -> str:
@@ -54,6 +58,18 @@ def allowed_source(path):
             or name.endswith((".pem", ".key", ".p12", ".pfx", ".jks", ".keystore"))):
         return False
     return name in FILENAMES or PurePosixPath(name).suffix in EXTENSIONS
+
+
+def validate_local_path(path: str) -> str:
+    """Enforce the browser's local-file policy independently of ZIP restrictions."""
+    validate_path(path)
+    parts = path.lower().split("/")
+    name = parts[-1]
+    if (any(part in LOCAL_EXCLUDED_DIRS or part.startswith(".env") for part in parts)
+            or name in SECRET_NAMES or re.sub(r"\.[^.]+$", "", name) in SECRET_STEMS
+            or (name not in FILENAMES and "." + name.split(".")[-1] not in LOCAL_EXTENSIONS)):
+        raise CodingError("该目录、敏感文件或非源码类型不允许访问", "CODING_FILE_BLOCKED")
+    return path
 
 
 def validate_files(files: dict[str, str]) -> dict[str, str]:

@@ -318,7 +318,7 @@
   min-height: 0;
 }
 .workspace:not(.has-messages) .conversation-stage {
-  flex-shrink: 0;
+  flex: 1 0 auto;
 }
 .conversation-view-enter-active {
   transition:

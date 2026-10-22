@@ -219,11 +219,11 @@
   overflow-wrap: anywhere;
   color: var(--text-secondary);
 }
-.account-usage > span {
+.account-usage-group > span {
   display: block;
   font-size: 12px;
 }
-.account-usage > strong {
+.account-usage-group > strong {
   display: block;
   color: var(--text);
   font-size: 25px;
@@ -233,6 +233,11 @@
   font-size: 13px;
   color: var(--muted);
   font-weight: 400;
+}
+.account-usage-group + .account-usage-group {
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+  padding-top: 12px;
 }
 .account-usage p {
   margin: 3px 0;

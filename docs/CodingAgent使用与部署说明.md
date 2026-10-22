@@ -147,11 +147,12 @@ Docker 参数和资源限制的官方依据：[容器运行参数](https://docs.
 
 - 原 `backend/app/coding/routes.py`：曾提供 ZIP 导入/文件/任务/导出接口，现已移除。
 - `store.py`、`workspace.py`：保留的任务快照、ZIP 和路径校验代码；本地模式仍复用部分公共逻辑。
-- `service.py`：保留模型额度、任务调度和取消等本地模式复用逻辑；应用不再创建旧 ZIP 编程服务。
+- `runtime.py`：公共任务调度、关闭等待、数据库调用辅助和模型计量；不依赖 ZIP 执行工具或 Docker 沙箱。
+- `service.py`：保留旧 ZIP 任务执行流程，通过公共运行时复用调度和计量。本地服务直接继承公共运行时，应用启动不再导入旧服务或创建沙箱对象。
 - `model.py`、`prompts.py`、`tools.py`：保留模型适配、工具定义等代码，不代表旧 ZIP 工具仍对用户开放。
 - `sandbox.py`、`backend/coding-sandbox/Dockerfile`：旧执行检查实现及镜像记录，本地文件模式不执行它们。
 - 原 `frontend/src/components/CodingWorkspace.vue` 和 `frontend/src/api/coding.js`：旧界面和旧 API 客户端，现已移除。
 
 既有迁移 `backend/sql/migrations/006_coding_agent.sql` 创建旧模式的 `coding_projects` 和 `coding_tasks`，原始文本和任务文件副本保存在 SQLite 中，不加入 Qdrant。迁移 006 及旧表/旧数据继续保留，既有迁移 `007_local_coding.sql` 创建本地任务表；数据库版本仍为 7。本次下线不增加迁移、不删除旧数据，没有代你启动后端或迁移真实数据库。若从更旧版本升级，仍按既有流程备份并升级到版本 7。
 
-旧 ZIP 接口的集成验收步骤不再适用。`backend/tests/test_coding.py` 中保留的公共逻辑或停用回归用例不表示 ZIP 工作台仍可使用；当前本地任务协议的离线用例为 `backend/tests/test_local_coding.py`，完整手动验收见本地模式说明。本次没有执行测试。
+旧 ZIP 接口的集成验收步骤不再适用。`backend/tests/test_coding.py` 中保留的公共逻辑或停用回归用例不表示 ZIP 工作台仍可使用；当前本地任务协议的离线用例为 `backend/tests/test_local_coding.py`，运行时依赖隔离与生命周期用例为 `backend/tests/test_coding_runtime.py`，完整手动验收见本地模式说明。

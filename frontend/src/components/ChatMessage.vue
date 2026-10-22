@@ -31,6 +31,7 @@ onUnmounted(() => clearTimeout(timer))
     class="message"
     :class="`message--${message.role}`"
     :aria-label="message.role === 'user' ? '你的问题' : 'AI 的回答'"
+    :aria-busy="message.streaming || undefined"
   >
     <template v-if="message.role === 'assistant'">
       <div class="assistant-label">
@@ -41,18 +42,32 @@ onUnmounted(() => clearTimeout(timer))
       <div class="markdown-body" v-html="html"></div>
       <div v-if="message.sources?.length" class="answer-sources" aria-label="回答参考资料">
         <strong>参考资料</strong>
-        <details v-for="(source, index) in message.sources" :key="`${source.attachment_id}-${index}`">
+        <details
+          v-for="(source, index) in message.sources"
+          :key="`${source.attachment_id}-${index}`"
+        >
           <summary>
-            [{{ index + 1 }}] {{ source.filename }}{{ source.page ? ` · 第 ${source.page} 页` : '' }}
+            [{{ index + 1 }}] {{ source.filename
+            }}{{ source.page ? ` · 第 ${source.page} 页` : '' }}
           </summary>
           <p>{{ source.snippet }}</p>
-          <a :href="`/api/attachments/${source.attachment_id}/content`" target="_blank" rel="noopener noreferrer">
+          <a
+            :href="`/api/attachments/${source.attachment_id}/content`"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             查看原文件
           </a>
         </details>
       </div>
       <p v-if="message.notice" class="answer-notice">{{ message.notice }}</p>
-      <button class="copy-button" type="button" aria-label="复制回答" @click="copy">
+      <button
+        v-if="!message.streaming"
+        class="copy-button"
+        type="button"
+        aria-label="复制回答"
+        @click="copy"
+      >
         <AppIcon :name="copyState === '已复制' ? 'check' : 'copy'" :size="14" />
         <span aria-live="polite">{{ copyState || '复制' }}</span>
       </button>

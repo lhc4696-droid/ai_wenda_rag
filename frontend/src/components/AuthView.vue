@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import AppIcon from './AppIcon.vue'
+import IdeaSculpture from './IdeaSculpture.vue'
 import { resetPassword, sendEmailCode, signIn, signUp } from '../api/auth.js'
 import { passwordError, usernameError } from '../lib/account-validation.js'
 
@@ -151,7 +152,10 @@ async function submit() {
         </span>
       </div>
       <div class="auth-story-content">
-        <span class="auth-eyebrow">A SPACE FOR YOUR IDEAS</span>
+        <span class="auth-eyebrow">
+          <i></i>
+          A SPACE FOR YOUR IDEAS
+        </span>
         <h1>
           与你的下一次
           <br />
@@ -162,20 +166,28 @@ async function submit() {
           <br />
           知言陪你提问、表达，也陪你找到新的可能。
         </p>
-        <div class="auth-illustration" aria-hidden="true">
-          <div class="orbit orbit-one"></div>
-          <div class="orbit orbit-two"></div>
-          <span class="orbit-spark"><AppIcon name="spark" :size="42" /></span>
-          <span class="idea-bubble">一个想法，可以走多远？</span>
-          <span class="answer-bubble">
-            <AppIcon name="spark" :size="17" />
-            我们一起探索。
+        <IdeaSculpture />
+        <div class="auth-capabilities" aria-label="知言能力">
+          <span>
+            <AppIcon name="chat" :size="14" />
+            自由对话
+          </span>
+          <span>
+            <AppIcon name="book" :size="14" />
+            文档问答
+          </span>
+          <span>
+            <AppIcon name="layers" :size="14" />
+            项目编程
           </span>
         </div>
       </div>
       <div class="auth-story-footer">
         知言 AI
-        <span>让想法继续 ↗</span>
+        <span>
+          让想法继续
+          <span aria-hidden="true">↗</span>
+        </span>
       </div>
     </section>
 
@@ -185,7 +197,7 @@ async function submit() {
         知言 AI
       </div>
       <div class="auth-form-container">
-        <span class="auth-form-eyebrow">YOUR PERSONAL AI SPACE</span>
+        <span class="auth-form-eyebrow">从这里，继续探索</span>
         <h2 id="auth-heading">{{ heading }}</h2>
         <p class="auth-description">
           {{
@@ -229,13 +241,12 @@ async function submit() {
               autocomplete="username"
               autocapitalize="none"
               :spellcheck="false"
-              maxlength="32"
               :disabled="locked"
               placeholder="你的用户名"
               aria-describedby="username-hint"
               required
             />
-            <small id="username-hint">3–32 位英文字母、数字或下划线</small>
+            <small id="username-hint">1–32 个字符，支持中文、字母、数字、常用符号和表情</small>
           </div>
           <template v-if="needsEmail">
             <div class="auth-field">

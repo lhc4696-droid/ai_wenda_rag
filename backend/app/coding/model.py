@@ -18,6 +18,8 @@ class CodingReply:
 
 
 class CodingModel:
+    billing_source = "default"
+
     def __init__(self, settings, tool_definitions=None):
         self.settings = settings
         self.name = settings.qwen_coding_model or settings.qwen_model

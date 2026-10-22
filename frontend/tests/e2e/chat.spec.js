@@ -25,8 +25,9 @@ test('欢迎页、输入方式、连续追问和新建对话', async ({ page }, 
     })
   })
   await page.goto('/')
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('今天想聊些什么？')
-  await expect(page.getByRole('button', { name: '服务已连接' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '今天想聊些什么？', exact: true })).toBeVisible()
+  if (testInfo.project.name !== 'mobile')
+    await expect(page.getByRole('button', { name: '服务已连接' })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.screenshot({ path: testInfo.outputPath('welcome.png'), fullPage: true })
   const input = page.getByRole('textbox', { name: '输入你的问题' })
@@ -50,7 +51,7 @@ test('欢迎页、输入方式、连续追问和新建对话', async ({ page }, 
   if (testInfo.project.name === 'mobile')
     await page.getByRole('button', { name: '打开导航' }).click()
   await page.getByRole('button', { name: '新建对话' }).click()
-  await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '今天想聊些什么？', exact: true })).toBeVisible()
   await expect(input).toHaveValue('')
   expect(errors).toEqual([])
 })
@@ -89,8 +90,8 @@ test('等待提示和刷新后恢复聊天', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('textbox').fill('测试等待')
   await page.getByRole('button', { name: '发送消息' }).click()
-  await expect(page.locator('.pending-message')).toContainText('正在思考')
-  await expect(page.getByRole('button', { name: '发送消息' })).toBeDisabled()
+  await expect(page.locator('.pending-message')).toContainText('正在准备回答')
+  await expect(page.getByRole('button', { name: '停止生成' })).toBeVisible()
   release()
   await expect(page.locator('.message--assistant')).toHaveCount(1)
   await page.reload()
@@ -98,7 +99,8 @@ test('等待提示和刷新后恢复聊天', async ({ page }) => {
   await expect(page.locator('.message--assistant')).toContainText('完成')
 })
 
-test('连接状态反映健康检查失败且可以重新检查', async ({ page }) => {
+test('连接状态反映健康检查失败且可以重新检查', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === 'mobile', '当前移动布局隐藏连接状态按钮')
   await page.unroute('**/api/health')
   let healthy = false
   await page.route('**/api/health', (route) =>

@@ -142,7 +142,7 @@ onUnmounted(() => {
       :disabled="signingOut"
       @click="toggle"
     >
-      <span class="profile-avatar">{{ user.username.slice(0, 1).toUpperCase() }}</span>
+      <span class="profile-avatar">{{ Array.from(user.username)[0]?.toUpperCase() }}</span>
       <span class="profile-name" :title="user.username">{{ user.username }}</span>
       <AppIcon class="account-chevron" name="chevron-down" :size="15" />
     </button>

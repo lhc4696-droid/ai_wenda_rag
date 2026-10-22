@@ -3,13 +3,14 @@ import socket
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app.config_groups import EmailCodeConfig
 from app.main import create_app, get_llm_provider
 from tests.fakes import FakeMailer, register_user
 
 
 @pytest.fixture
 def app(tmp_path):
-    settings = Settings(dashscope_api_key="", qwen_model="test-model", system_prompt="test", cors_origins=("http://127.0.0.1:5173", "http://localhost:5173"), auth_db_path=tmp_path / "auth.sqlite3", email_code_secret="test-only-secret-do-not-use-in-production-2026")
+    settings = Settings(dashscope_api_key="", qwen_model="test-model", qwen_vision_model="", qwen_coding_model="", system_prompt="test", cors_origins=("http://127.0.0.1:5173", "http://localhost:5173"), auth_db_path=tmp_path / "auth.sqlite3", email_code=EmailCodeConfig(secret="test-only-secret-do-not-use-in-production-2026"))
     application = create_app(settings)
     application.state.mailer = FakeMailer()
     class NoExternalModel:

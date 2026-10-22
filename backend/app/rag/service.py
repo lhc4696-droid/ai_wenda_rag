@@ -1,14 +1,17 @@
 """不依赖 Agent 的单路密集向量 RAG，限定当前登录用户和当前会话。"""
 
 import asyncio
+from dataclasses import dataclass
 from http import HTTPStatus
 import logging
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, uuid5, uuid4
 
 import aiohttp
 
 from app.conversations.store import HistoryError
 from app.rag.chunks import split_text
+from app.chat.accounting import track_call
+from app.chat.store import ModelCallStore
 
 
 logger = logging.getLogger(__name__)
@@ -21,6 +24,12 @@ def condition(key, value):
 class RagError(HistoryError):
     def __init__(self, message, code="RAG_UNAVAILABLE", status=503):
         super().__init__(message, code, status)
+
+
+@dataclass(frozen=True)
+class EmbeddingBatch:
+    vectors: list[list[float]]
+    input_tokens: int | None = None
 
 
 class DashScopeEmbedding:
@@ -39,6 +48,7 @@ class DashScopeEmbedding:
                 text_type=text_type,
                 dimension=self.settings.embedding_dimension,
                 api_key=self.settings.dashscope_api_key,
+                timeout=30,
             )
 
         try:
@@ -55,7 +65,11 @@ class DashScopeEmbedding:
                 vectors[index] = vector
             if any(vector is None for vector in vectors):
                 raise ValueError("incomplete embeddings")
-            return vectors
+            usage = response.usage
+            tokens = usage.get("total_tokens") if isinstance(usage, dict) else None
+            if type(tokens) is not int or not 0 <= tokens <= 1_000_000_000:
+                tokens = None
+            return EmbeddingBatch(vectors, tokens)
         except RagError:
             raise
         except Exception as exc:
@@ -149,6 +163,16 @@ class RagService:
         self.auth, self.settings = auth, settings
         self.embedding = embedding or DashScopeEmbedding(settings)
         self.vectors = vectors or QdrantStore(settings)
+        self.calls = ModelCallStore(auth)
+
+    async def _embed(self, user_id, texts, text_type):
+        # Each actual batch consumes the server's embedding allowance, including
+        # failed calls. Cache hits consume none; the browser cannot choose source.
+        async with track_call(self.calls, uuid4().hex, user_id, sum(map(len, texts)),
+                              self.settings, self.settings.embedding_model, "embedding", 60) as recorded:
+            result = await self.embedding.embed(texts, text_type)
+            recorded.input_tokens = result.input_tokens
+            return result.vectors
 
     def documents(self, user_id, conversation_id):
         with self.auth.connect() as db:
@@ -192,9 +216,9 @@ class RagService:
                         await self.vectors.delete_attachment(user_id, document["id"])
                         vectors = []
                         for start in range(0, len(chunks), 10):
-                            vectors.extend(await self.embedding.embed([chunk["text"] for chunk in chunks[start:start + 10]], "document"))
+                            vectors.extend(await self._embed(user_id, [chunk["text"] for chunk in chunks[start:start + 10]], "document"))
                         await self.vectors.upsert(user_id, conversation_id, document["id"], document["filename"], chunks, vectors)
-                query = (await self.embedding.embed([question[:3000]], "query"))[0]
+                query = (await self._embed(user_id, [question[:3000]], "query"))[0]
                 hits = await self.vectors.search(user_id, conversation_id, [item["id"] for item in documents], query)
         except TimeoutError:
             raise RagError("资料索引或检索超时，请稍后重试", "RAG_TIMEOUT", 504) from None

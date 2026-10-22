@@ -262,6 +262,8 @@ def get_settings() -> Settings:
         qdrant_collection=os.getenv("QDRANT_COLLECTION", "zhiyan_documents_v1").strip(),
         embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-v4").strip(),
         embedding_dimension=env_int("EMBEDDING_DIMENSION", 1024),
+        requests_per_day=env_int("RAG_EMBEDDING_REQUESTS_PER_DAY", 100),
+        global_requests_per_day=env_int("RAG_EMBEDDING_GLOBAL_REQUESTS_PER_DAY", 1000),
     )
 
     # 构建Coding配置

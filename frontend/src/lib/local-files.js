@@ -6,6 +6,8 @@ const blockedDirectories = new Set([
   '.hg',
   '.ssh',
   '.aws',
+  '.docker',
+  '.kube',
   '.codex',
   '.agents',
   'venv',

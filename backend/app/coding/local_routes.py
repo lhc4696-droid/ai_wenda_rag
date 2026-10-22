@@ -15,7 +15,7 @@ from .local_schemas import (
 from .local_service import LOCAL_PROMPT
 from .local_store import public_local
 from .schemas import CodingError
-from .service import database_call
+from .runtime import database_call
 
 
 router = APIRouter(prefix="/api/coding/local", tags=["本地文件 Coding Agent"], dependencies=[Depends(require_trusted_origin)])

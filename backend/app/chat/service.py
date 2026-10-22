@@ -1,6 +1,7 @@
 import asyncio
-import time
+from contextlib import aclosing
 
+from app.chat.accounting import track_call
 from app.chat.store import ModelCallStore
 from app.config import Settings
 from app.observability import logger
@@ -67,57 +68,65 @@ class ChatService:
             if pending:
                 logger.warning("chat_disconnect_watch_cleanup_pending count=%s", len(pending))
 
-    async def answer(self, messages, user_id: int, identifier: str, provider: LLMProvider, disconnected=None):
+    @staticmethod
+    async def generate_stream(provider, messages, on_delta):
+        """A stream item contains a text delta and optional final usage metadata."""
+        content, final = "", LLMResult("")
+        async with aclosing(provider.stream_chat(messages)) as stream:
+            async for item in stream:
+                if not isinstance(item, LLMResult) or not isinstance(item.content, str):
+                    raise LLMError("模型服务返回了无效的流式数据", "LLM_INVALID_RESPONSE")
+                if final.finish_reason and item.content:
+                    raise LLMError("模型完成后返回了额外内容", "LLM_INVALID_RESPONSE")
+                for field in ("input_tokens", "output_tokens", "finish_reason", "model"):
+                    value = getattr(item, field)
+                    if value is not None:
+                        setattr(final, field, value)
+                remaining = MAX_ANSWER_LENGTH - len(content)
+                delta = item.content[:remaining]
+                content += delta
+                if delta:
+                    await on_delta(delta)
+                if len(item.content) > remaining:
+                    final.finish_reason = "length"
+                    break
+        if not final.finish_reason:
+            raise LLMError("模型响应意外中断，请重试本次问题", "LLM_STREAM_INCOMPLETE")
+        if final.finish_reason not in {"stop", "length"}:
+            raise LLMError("模型未能完成本次回答，请调整问题后重试", "LLM_INVALID_RESPONSE")
+        final.content = content
+        return final
+
+    async def answer(self, messages, user_id: int, identifier: str, provider: LLMProvider, disconnected=None, on_delta=None, prepare=None):
         selected, trimmed = bounded_context(messages, self.settings)
-        started = time.monotonic()
         planned_model = self.settings.qwen_vision_model if any(getattr(item, "images", []) for item in selected) else self.settings.qwen_model
         if callable(getattr(provider, "model_for", None)):
             planned_model = provider.model_for(selected)
-        reservation = asyncio.create_task(asyncio.to_thread(self.store.reserve, identifier, user_id, sum(len(item.content) for item in selected) + len(self.settings.system_prompt) + len(ATTACHMENT_POLICY), self.settings, planned_model))
-        try:
-            await asyncio.shield(reservation)
-        except asyncio.CancelledError:
-            # 数据库占额不能因 HTTP 取消而留下一条未释放的运行记录。
+        lease = self.settings.chat_timeout + (120 if prepare else 30)
+        input_chars = lambda context: sum(len(item.content) for item in context) + len(self.settings.system_prompt) + len(ATTACHMENT_POLICY)
+        async with track_call(self.store, identifier, user_id, input_chars(selected), self.settings,
+                              planned_model, getattr(provider, "billing_source", "default"), lease) as recorded:
             try:
-                await asyncio.shield(reservation)
-            except Exception:
-                pass
-            else:
-                await asyncio.shield(asyncio.to_thread(self.store.finish, identifier, "cancelled", 0, error_code="REQUEST_CANCELLED"))
-            raise
-        state, error_code = "failed", "INTERNAL_ERROR"
-        result = None
-        content = None
-        try:
-            async with asyncio.timeout(self.settings.chat_timeout):
-                answer = await self.generate(provider, selected, disconnected)
-            result = LLMResult(answer) if isinstance(answer, str) else answer
-            if not isinstance(result, LLMResult) or not isinstance(result.content, str) or not result.content.strip():
-                raise LLMError("AI 服务未返回有效回答", "LLM_INVALID_RESPONSE")
-            content = result.content.strip()
-            truncated = len(content) > MAX_ANSWER_LENGTH or result.finish_reason == "length"
-            content = content[:MAX_ANSWER_LENGTH]
-            state, error_code = "succeeded", None
-            return ChatResponse(content=content, model=result.model or planned_model, context_trimmed=trimmed, answer_truncated=truncated, request_id=identifier)
-        except TimeoutError:
-            state, error_code = "timed_out", "LLM_TIMEOUT"
-            raise LLMError("AI 服务响应超时，请稍后重试或缩短问题", error_code, 504) from None
-        except LLMError as exc:
-            state = "cancelled" if exc.code == "REQUEST_CANCELLED" else "timed_out" if exc.status_code == 504 else "failed"
-            error_code = exc.code
-            raise
-        except asyncio.CancelledError:
-            state, error_code = "cancelled", "REQUEST_CANCELLED"
-            raise
-        finally:
-            duration = round((time.monotonic() - started) * 1000)
-            try:
-                await asyncio.shield(asyncio.to_thread(self.store.finish, identifier, state, duration,
-                    output_chars=len(content) if content is not None else None,
-                    input_tokens=result.input_tokens if isinstance(result, LLMResult) else None,
-                    output_tokens=result.output_tokens if isinstance(result, LLMResult) else None,
-                    error_code=error_code))
-            except Exception as exc:
-                # 统计写入失败也不能把已经收到的正常回答转换成重试，租约会自动过期。
-                logger.error("chat_finalize_failed request_id=%s category=%s", identifier, type(exc).__name__)
-            logger.info("chat_complete request_id=%s state=%s duration_ms=%s code=%s", identifier, state, duration, error_code or "OK")
+                if prepare is not None:
+                    # The parent allowance and slot cover retrieval plus generation.
+                    await prepare()
+                    selected, prepared_trimmed = bounded_context(messages, self.settings)
+                    trimmed = trimmed or prepared_trimmed
+                recorded.input_chars = input_chars(selected)
+                async with asyncio.timeout(self.settings.chat_timeout):
+                    if on_delta is None:
+                        answer = await self.generate(provider, selected, disconnected)
+                    else:
+                        answer = await self.generate_stream(provider, selected, on_delta)
+                result = LLMResult(answer) if isinstance(answer, str) else answer
+                if not isinstance(result, LLMResult) or not isinstance(result.content, str) or not result.content.strip():
+                    raise LLMError("AI 服务未返回有效回答", "LLM_INVALID_RESPONSE")
+                content = result.content.strip()
+                truncated = len(content) > MAX_ANSWER_LENGTH or result.finish_reason == "length"
+                content = content[:MAX_ANSWER_LENGTH]
+                recorded.output_chars = len(content)
+                recorded.input_tokens, recorded.output_tokens = result.input_tokens, result.output_tokens
+                return ChatResponse(content=content, model=result.model or planned_model, context_trimmed=trimmed,
+                                    answer_truncated=truncated, request_id=identifier)
+            except TimeoutError:
+                raise LLMError("AI 服务响应超时，请稍后重试或缩短问题", "LLM_TIMEOUT", 504) from None

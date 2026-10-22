@@ -1,4 +1,5 @@
 from typing import Literal
+import unicodedata
 
 from email_validator import EmailNotValidError, validate_email
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
@@ -6,13 +7,29 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 class Credentials(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    username: str = Field(min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_]+$")
+    username: str = Field(min_length=1, max_length=32)
     password: SecretStr = Field(min_length=8, max_length=128)
 
     @field_validator("username", mode="before")
     @classmethod
     def strip_username(cls, value):
-        return value.strip() if isinstance(value, str) else value
+        if not isinstance(value, str):
+            return value
+        # Check before trimming so leading/trailing control characters are not
+        # silently accepted. Joiners support composed emoji and natural scripts.
+        joiners = "\u200c\u200d"
+        if any(not (unicodedata.category(char)[0] in "LMNPS"
+                    or unicodedata.category(char) == "Zs" or char in joiners)
+               for char in value):
+            raise ValueError("用户名不能包含换行、控制字符或不可见格式字符")
+        value = value.strip()
+        # These blank glyphs are classified as letters/symbols, not whitespace.
+        blank_glyphs = "\u115f\u1160\u3164\uffa0\u2800"
+        if (not value or value[0] in joiners or value[-1] in joiners
+                or not any(unicodedata.category(char)[0] in "LNPS" and char not in blank_glyphs
+                           for char in value)):
+            raise ValueError("用户名必须包含可见字符，不能全部为空白或不可见字符")
+        return value
 
     @field_validator("password")
     @classmethod
@@ -95,7 +112,7 @@ class CurrentPasswordRequest(BaseModel):
 
 class RenameAccountRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    username: str = Field(min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_]+$")
+    username: str = Field(min_length=1, max_length=32)
 
     @field_validator("username", mode="before")
     @classmethod

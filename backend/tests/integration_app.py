@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 
 from app.config import Settings
+from app.config_groups import EmailCodeConfig
 from app.main import create_app
 from tests.fakes import FakeMailer
 
@@ -23,5 +24,5 @@ class RecordingMailer(FakeMailer):
         temporary.replace(root / "outbox.json")
 
 
-app = create_app(Settings(dashscope_api_key="", qwen_model="test-model", system_prompt="test", cors_origins=tuple(os.environ["CORS_ORIGINS"].split(",")), auth_db_path=root / "auth.sqlite3", email_code_secret="integration-test-only-secret-never-use-in-production"))
+app = create_app(Settings(dashscope_api_key="", qwen_model="test-model", qwen_vision_model="", qwen_coding_model="", system_prompt="test", cors_origins=tuple(os.environ["CORS_ORIGINS"].split(",")), auth_db_path=root / "auth.sqlite3", email_code=EmailCodeConfig(secret="integration-test-only-secret-never-use-in-production")))
 app.state.mailer = RecordingMailer()

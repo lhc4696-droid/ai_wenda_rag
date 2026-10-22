@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -12,6 +13,23 @@ from app.coding.local_service import LOCAL_PROMPT, LOCAL_TOOLS
 from app.coding.local_store import public_local
 from app.coding.model import CodingReply
 from app.coding.schemas import CodingError
+
+
+PATH_POLICY = json.loads((Path(__file__).parent / "fixtures" / "local_path_policy.json").read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("path", PATH_POLICY["blocked"])
+def test_local_create_rejects_sensitive_and_unsafe_paths(path):
+    with pytest.raises(ValidationError):
+        LocalCreate(instruction="test", directory_name="demo", conversation_id=uuid4(),
+                    client_task_id=uuid4(), grant_token="x" * 64, paths=[path])
+
+
+@pytest.mark.parametrize("path", PATH_POLICY["allowed"])
+def test_local_create_preserves_supported_source_paths(path):
+    data = LocalCreate(instruction="test", directory_name="demo", conversation_id=uuid4(),
+                       client_task_id=uuid4(), grant_token="x" * 64, paths=[path])
+    assert data.paths == [path]
 
 
 def create_task(logged_in, app):

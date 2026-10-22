@@ -15,6 +15,29 @@ from app.observability import logger
 EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".txt", ".md", ".pdf", ".docx"}
 
 
+async def _drain(worker):
+    """Wait for started work even if disconnect/shutdown cancels its caller again."""
+    while True:
+        try:
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            if worker.done():
+                return worker.result()
+
+
+async def _blocking(operation, *args):
+    """Do not close files or release slots while their blocking worker still runs."""
+    worker = asyncio.create_task(asyncio.to_thread(operation, *args))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        try:
+            await _drain(worker)
+        except Exception as error:
+            logger.warning("attachment_worker_failed_after_cancel category=%s", type(error).__name__)
+        raise
+
+
 class AttachmentService:
     def __init__(self, auth, settings, model_settings=None):
         self.store = AttachmentStore(auth, settings)
@@ -53,13 +76,15 @@ class AttachmentService:
                 return json.loads(completed.stdout)
             except subprocess.TimeoutExpired:
                 return {"error": "文件解析超过 30 秒，请拆分或简化后重试。"}
-        task = asyncio.create_task(asyncio.to_thread(run))
+        return await _blocking(run)
+
+    async def _abandon(self, user_id, identifier):
+        worker = asyncio.create_task(asyncio.to_thread(self.store.abandon, user_id, identifier))
         try:
-            return await asyncio.shield(task)
-        except asyncio.CancelledError:
-            # 退出前等待受限进程结束，不在其写预览时释放并发槽或删除文件。
-            await asyncio.shield(task)
-            raise
+            await _drain(worker)
+        except Exception as error:
+            # Preserve the original failure/cancellation; expiry cleanup remains a fallback.
+            logger.warning("attachment_abandon_failed id=%s category=%s", identifier, type(error).__name__)
 
     async def upload(self, user_id, upload):
         filename = (upload.filename or "附件").replace("\\", "/").rsplit("/", 1)[-1]
@@ -75,7 +100,17 @@ class AttachmentService:
         if not upload.size or upload.size > self.settings.attachment_max_bytes:
             raise AttachmentError("附件不能为空或超过单文件大小限制", 413)
         async with self.slots:
-            identifier = await asyncio.to_thread(self.store.reserve, user_id, filename, extension, kind)
+            reservation = asyncio.create_task(asyncio.to_thread(self.store.reserve, user_id, filename, extension, kind))
+            try:
+                identifier = await asyncio.shield(reservation)
+            except asyncio.CancelledError:
+                try:
+                    identifier = await _drain(reservation)
+                except Exception as error:
+                    logger.warning("attachment_reservation_failed_after_cancel category=%s", type(error).__name__)
+                else:
+                    await self._abandon(user_id, identifier)
+                raise
             try:
                 size = 0
                 with self.storage.create(identifier) as target:
@@ -83,16 +118,16 @@ class AttachmentService:
                         size += len(chunk)
                         if size > self.settings.attachment_max_bytes:
                             raise AttachmentError("文件超过大小限制", 413)
-                        await asyncio.to_thread(target.write, chunk)
+                        await _blocking(target.write, chunk)
                 result = await self.process(identifier, extension)
                 preview = self.storage.path(identifier, True)
                 disk_size = size + (preview.stat().st_size if preview.exists() else 0)
                 if disk_size > self.settings.attachment_max_bytes + 3 * 1024 * 1024:
                     raise AttachmentError("处理后的图片过大，请缩小后重试", 413)
-                return await asyncio.to_thread(self.store.finish, user_id, identifier, size, result, disk_size)
+                return await _blocking(self.store.finish, user_id, identifier, size, result, disk_size)
             except BaseException:
                 # 不在取消时撤回可能已经绑定成功的附件；孤立记录由周期清理兜底。
-                await asyncio.shield(asyncio.to_thread(self.store.abandon, user_id, identifier))
+                await self._abandon(user_id, identifier)
                 raise
 
     def cleanup(self):

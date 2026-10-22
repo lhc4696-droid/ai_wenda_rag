@@ -36,7 +36,7 @@ def test_long_answer_is_bounded_and_follow_up_remains_valid(logged_in, app):
 
 
 def test_context_budget_preserves_recent_complete_turns(app):
-    settings = replace(app.state.settings, chat_context_chars=20_000)
+    settings = replace(app.state.settings, chat=replace(app.state.settings.chat, context_chars=20_000))
     messages = [ChatMessage(role="user", content="旧" * 10_000), ChatMessage(role="assistant", content="答" * 10_000), ChatMessage(role="user", content="新问题")]
     selected, trimmed = bounded_context(messages, settings)
     assert trimmed and selected == [messages[-1]]
@@ -58,15 +58,15 @@ def test_limits_are_atomic_and_count_failed_accepted_calls(logged_in, app):
         identifier = db.execute("SELECT request_id FROM model_calls WHERE state = 'running'").fetchone()[0]
     store.finish(identifier, "failed", 1, error_code="LLM_UNAVAILABLE")
     with pytest.raises(ChatLimit) as exc:
-        store.reserve("minute-limit", user_id, 2, replace(settings, chat_requests_per_minute=1))
+        store.reserve("minute-limit", user_id, 2, replace(settings, chat=replace(settings.chat, requests_per_minute=1)))
     assert exc.value.code == "CHAT_RATE_LIMIT"
     with pytest.raises(ChatLimit) as exc:
-        store.reserve("daily-limit", user_id, 2, replace(settings, chat_requests_per_day=1))
+        store.reserve("daily-limit", user_id, 2, replace(settings, chat=replace(settings.chat, requests_per_day=1)))
     assert exc.value.code == "CHAT_DAILY_LIMIT"
 
 
 def test_global_concurrency_and_abandoned_lease_recovery(logged_in, app):
-    store, settings = app.state.model_calls, replace(app.state.settings, chat_global_concurrency=1)
+    store, settings = app.state.model_calls, replace(app.state.settings, chat=replace(app.state.settings.chat, global_concurrency=1))
     user_id = logged_in.get("/api/auth/me").json()["user"]["id"]
     store.reserve("first", user_id, 2, settings)
     with pytest.raises(ChatLimit) as exc:
@@ -103,3 +103,14 @@ def test_usage_cannot_read_another_accounts_calls(client, app):
     assert client.get("/api/chat/usage").status_code == 401
     register_user(client, {"username": "visitor", "password": "abcd1234"})
     assert client.get(f"/api/chat/usage?user_id={owner['id']}").json()["requests"] == 0
+
+
+def test_client_cannot_claim_custom_source_to_bypass_default_quota(logged_in, app):
+    service = app.state.conversation_service.chat
+    service.settings = replace(service.settings, chat=replace(service.settings.chat, requests_per_day=1))
+    owner = logged_in.get('/api/auth/me').json()['user']['id']
+    app.state.model_calls.reserve('default-used', owner, 1, service.settings)
+    app.state.model_calls.finish('default-used', 'succeeded', 1)
+    response = logged_in.post('/api/chat', json={**QUESTION, 'source': 'custom', 'billing_source': 'custom'})
+    assert response.status_code == 429
+    assert response.headers['x-error-code'] == 'CHAT_DAILY_LIMIT'

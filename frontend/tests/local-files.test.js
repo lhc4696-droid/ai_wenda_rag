@@ -1,20 +1,31 @@
 // In-memory browser API substitutes only. No real directories, API calls or models.
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
   LocalFolderSession,
   validateLocalPath,
   restoreLocalJournal,
 } from '../src/lib/local-files.js'
 
+// Both runtimes exercise the same hand-written policy examples.
+const pathPolicy = JSON.parse(
+  readFileSync(
+    new URL('../../backend/tests/fixtures/local_path_policy.json', import.meta.url),
+    'utf8',
+  ),
+)
+
 class MemoryFile {
   kind = 'file'
   saves = 0
+  reads = 0
   constructor(name, text = '') {
     this.name = name
     this.text = text
   }
   async getFile() {
+    this.reads++
     return new Blob([this.text])
   }
   async createWritable() {
@@ -110,6 +121,70 @@ function memoryJournals(t) {
 function call(name, args, id = name) {
   return { id, function: { name, arguments: JSON.stringify(args) } }
 }
+
+test('前后端共用路径用例：敏感路径拦截，正常源码保持可用', () => {
+  for (const path of pathPolicy.blocked)
+    assert.throws(() => validateLocalPath(path), undefined, path)
+  for (const path of pathPolicy.allowed) assert.equal(validateLocalPath(path), path)
+})
+
+test('敏感目录不能扫描、读取、写入或通过恢复记录访问', async (t) => {
+  memoryJournals(t)
+  for (const path of [
+    '.docker/config.json',
+    '.kube/config.yaml',
+    'nested/.DOCKER/config.json',
+    'nested/tools/.KuBe/config.yaml',
+    '.codex/config.toml',
+    '.agents/instructions.md',
+  ]) {
+    const root = new MemoryDirectory()
+    root.children.set('main.py', new MemoryFile('main.py', 'pass'))
+    const parts = path.split('/')
+    let directory = root
+    for (const name of parts.slice(0, -1)) {
+      const child = new MemoryDirectory(name)
+      directory.children.set(name, child)
+      directory = child
+    }
+    const file = new MemoryFile(parts.at(-1), 'sensitive test fixture')
+    directory.children.set(file.name, file)
+    const session = new LocalFolderSession(root, 1, path)
+    assert.deepEqual((await session.scan()).paths, ['main.py'], path)
+    // A stale or injected manifest must not bypass checks at the access boundary.
+    session.files.set(path, { path, size: 22 })
+    session.reads.set(path, file.text)
+    await assert.rejects(session.read(path))
+    await assert.rejects(session.write(path, 'changed', false))
+    await assert.rejects(session.write(path, 'created', true))
+    assert.equal(
+      (await session.execute(call('search_code', { query: 'sensitive', path }), 1)).ok,
+      false,
+    )
+    assert.equal(
+      (
+        await session.execute(
+          call('replace_text', {
+            path,
+            old_text: 'sensitive',
+            new_text: 'changed',
+          }),
+          2,
+        )
+      ).ok,
+      false,
+    )
+    const restored = await restoreLocalJournal(root, {
+      key: `1:${path}`,
+      directoryName: root.name,
+      entries: [{ path, before: 'original', after: file.text, phase: 'applied' }],
+    })
+    assert.deepEqual(restored, { restored: [], conflicts: [path] })
+    assert.equal(file.reads, 0, path)
+    assert.equal(file.saves, 0, path)
+    assert.equal(file.text, 'sensitive test fixture')
+  }
+})
 
 test('拒绝越界、敏感文件、非法 Unicode 和非源码', () => {
   for (const path of [

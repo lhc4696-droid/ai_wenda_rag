@@ -29,6 +29,29 @@ const feedback = ref('')
 const retrySeconds = ref(0)
 const usage = ref(null)
 const usageError = ref('')
+const usageEntries = computed(() => {
+  if (!usage.value) return []
+  return [
+    {
+      id: 'default',
+      label: '默认模型调用',
+      data: usage.value,
+      note: '使用项目提供的模型，每日额度仅统计默认模型调用。',
+    },
+    {
+      id: 'custom',
+      label: '个人 API 调用',
+      data: usage.value.custom,
+      note: '不扣默认模型额度，仍受请求频率、并发和超时限制；费用由你的模型服务商计算。',
+    },
+    {
+      id: 'embedding',
+      label: '资料向量调用',
+      data: usage.value.embedding,
+      note: '使用服务器的向量模型，按实际请求批次独立限额；一次资料问答可能调用多次。',
+    },
+  ].filter((item) => item.data)
+})
 let cooldownTimer
 let alive = true
 let previousFocus
@@ -216,7 +239,7 @@ onUnmounted(() => {
         aria-labelledby="account-tab-profile"
       >
         <div class="account-summary">
-          <span class="profile-avatar">{{ user.username.slice(0, 1).toUpperCase() }}</span>
+          <span class="profile-avatar">{{ Array.from(user.username)[0]?.toUpperCase() }}</span>
           <div>
             <strong>{{ user.username }}</strong>
             <p>{{ user.email || '此旧账号尚未绑定邮箱，暂不支持邮箱找回' }}</p>
@@ -224,16 +247,34 @@ onUnmounted(() => {
           </div>
         </div>
         <div v-if="usage" class="account-usage">
-          <span>今日模型调用</span>
-          <strong>
-            {{ usage.requests }}
-            <small>/ {{ usage.daily_limit }} 次</small>
-          </strong>
-          <p>
-            成功 {{ usage.succeeded }} 次 · 额度于
-            {{ new Date(usage.resets_at * 1000).toLocaleString() }} 重置
+          <section
+            v-for="item in usageEntries"
+            :key="item.id"
+            class="account-usage-group"
+            :aria-label="item.label"
+          >
+            <span>今日{{ item.label }}</span>
+            <strong>
+              {{ item.data.requests }}
+              <small v-if="item.data.daily_limit != null">/ {{ item.data.daily_limit }} 次</small>
+              <small v-else>次</small>
+            </strong>
+            <p>
+              成功 {{ item.data.succeeded }} 次 · Token 输入 {{ item.data.input_tokens ?? '—' }} /
+              输出 {{ item.data.output_tokens ?? '—' }}
+            </p>
+            <p>{{ item.note }}</p>
+          </section>
+          <p v-if="usage.legacy_requests">
+            来源未记录的旧调用 {{ usage.legacy_requests }} 次，暂计入默认模型额度。
           </p>
-          <p>已受理的失败调用也计入额度，此处不是聊天历史。</p>
+          <p>
+            统计与额度于
+            {{
+              new Date(usage.resets_at * 1000).toLocaleString()
+            }}
+            重置。已受理的失败、取消和超时也计次；— 表示用量未知，Token 仅汇总已知部分。
+          </p>
         </div>
         <p v-else class="account-usage">{{ usageError || '正在读取调用统计…' }}</p>
         <form class="account-form" novalidate @submit.prevent="saveUsername">
@@ -247,13 +288,12 @@ onUnmounted(() => {
               autocomplete="username"
               autocapitalize="none"
               :spellcheck="false"
-              maxlength="32"
               :disabled="Boolean(busy)"
               aria-describedby="account-name-hint"
               required
             />
             <small id="account-name-hint">
-              3–32 位英文字母、数字或下划线，不能与其他账号重复。
+              1–32 个字符，支持中文、字母、数字、常用符号和表情，不能与其他账号重复。
             </small>
           </div>
           <button class="auth-submit" type="submit" :disabled="Boolean(busy) || retrySeconds > 0">

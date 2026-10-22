@@ -135,7 +135,9 @@ class AuthStore:
         """用事务限制并发请求；只信任连接 IP，不读取客户端转发头。"""
         now = int(time.time())
         buckets = [(f"ip:{ip}", 40)]
-        buckets.append((f"user:{username.lower()}", 10) if action == "login" else (f"register:{ip}", 10))
+        # Match SQLite NOCASE: only ASCII letters share a username identity.
+        username_key = username.translate(str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"))
+        buckets.append((f"user:{username_key}", 10) if action == "login" else (f"register:{ip}", 10))
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             db.execute("DELETE FROM auth_attempts WHERE reset_at <= ?", (now,))

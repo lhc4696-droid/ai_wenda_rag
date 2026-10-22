@@ -43,7 +43,8 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
       (draftAttachments.value.some((item) => item.kind === 'image')
         ? attachmentCapabilities.value?.vision_model
         : attachmentCapabilities.value?.chat_model) ||
-      [...messages.value].reverse().find((message) => message.role === 'assistant')?.model || '',
+      [...messages.value].reverse().find((message) => message.role === 'assistant')?.model ||
+      '',
   )
   const hasPriorDocuments = computed(() =>
     messages.value.some((message) => message.attachments?.some((item) => item.kind === 'document')),
@@ -73,7 +74,8 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
   let listRevision = 0
   let createId = crypto.randomUUID()
   let lastSubmission = null
-  let sendController, readController, olderController, listController
+  let readController, olderController, listController
+  const generations = new Map()
   let pollTimer, cooldownTimer
   const mutations = new Set()
   const deleted = new Set()
@@ -87,7 +89,8 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
       const value = await filesApi.capabilities(capabilityController.signal)
       if (alive && revision === capabilityRevision) attachmentCapabilities.value = value
     } catch (cause) {
-      if (alive && revision === capabilityRevision) attachmentError.value = '暂时无法读取模型与附件能力，可刷新页面重试。'
+      if (alive && revision === capabilityRevision)
+        attachmentError.value = '暂时无法读取模型与附件能力，可刷新页面重试。'
     }
   }
 
@@ -119,7 +122,8 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
         continue
       }
       if (kind === 'image' && !attachmentCapabilities.value.images_enabled) {
-        attachmentError.value = '当前模型尚未启用图片能力：自定义模型请在账号设置填写视觉模型；默认模型请联系维护者配置。'
+        attachmentError.value =
+          '当前模型尚未启用图片能力：自定义模型请在账号设置填写视觉模型；默认模型请联系维护者配置。'
         continue
       }
       const localId = crypto.randomUUID()
@@ -216,7 +220,6 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
   function leaveView() {
     ++view
     clearTimeout(pollTimer)
-    sendController?.abort()
     readController?.abort()
     olderController?.abort()
     submitting.value = opening.value = refreshing.value = loadingOlder.value = false
@@ -327,6 +330,18 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
       last_sequence: 0,
     }
     updateUrl(id)
+    const run = generations.get(id)
+    if (run) {
+      messages.value = run.messages
+      nextBefore.value = run.nextBefore
+      lastSubmission = run.submission
+      notice.value = run.notice || ''
+      if (run.active) {
+        submitting.value = true
+        return
+      }
+      generations.delete(id)
+    }
     opening.value = true
     await refreshCurrent()
     if (epoch === view) opening.value = false
@@ -376,81 +391,152 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
     }
   }
 
+  function viewing(run) {
+    return (
+      alive &&
+      ((run.conversation && current.value?.id === run.conversation.id) ||
+        (!current.value && createId === run.createId))
+    )
+  }
+
   async function submit(data, isRetry = false) {
-    const epoch = view
+    // The generation belongs to its conversation, not to the currently visible view.
     const controller = new AbortController()
-    sendController = controller
+    const run = {
+      key: current.value?.id || createId,
+      createId,
+      conversation: current.value,
+      controller,
+      messages: messages.value,
+      nextBefore: nextBefore.value,
+      submission: {
+        ...data,
+        attachments: isRetry ? tail.value?.attachments || [] : [...draftAttachments.value],
+      },
+      active: true,
+      notice: '',
+    }
+    generations.set(run.key, run)
+    lastSubmission = run.submission
     submitting.value = true
     clearTimeout(pollTimer)
     error.value = notice.value = ''
+    if (!isRetry) {
+      run.messages.push({
+        id: data.client_message_id,
+        client_message_id: data.client_message_id.replaceAll('-', ''),
+        sequence: data.expected_last_sequence + 1,
+        role: 'user',
+        content: data.content,
+        status: 'pending',
+        local: true,
+        attachments: run.submission.attachments,
+      })
+      draft.value = ''
+      draftAttachments.value = []
+    } else if (tail.value) tail.value.status = 'pending'
+    let confirmed = false
     try {
-      if (!current.value) {
-        const conversation = await api.create(createId, controller.signal)
-        if (epoch !== view || !alive) return
-        current.value = conversation
-        updateUrl(conversation.id)
+      if (!run.conversation) {
+        const conversation = await api.create(run.createId, controller.signal)
+        if (!alive) return
+        if (controller.signal.aborted) throw controller.signal.reason
+        run.conversation = conversation
+        generations.delete(run.key)
+        run.key = conversation.id
+        generations.set(run.key, run)
+        if (viewing(run)) {
+          current.value = conversation
+          updateUrl(conversation.id)
+        }
         upsert(conversation)
       }
-      lastSubmission = {
-        ...data,
-        attachments: isRetry ? tail.value?.attachments || [] : [...draftAttachments.value],
+      const streamId = `stream-${data.client_message_id}`
+      const onDelta = (delta) => {
+        if (!alive || controller.signal.aborted) return
+        const partial = run.messages.find((message) => message.id === streamId)
+        if (partial) partial.content += delta
+        else
+          run.messages.push({
+            id: streamId,
+            client_message_id: data.client_message_id.replaceAll('-', ''),
+            role: 'assistant',
+            content: delta,
+            status: 'pending',
+            local: true,
+            streaming: true,
+            sequence: data.expected_last_sequence + 2,
+          })
       }
-      if (!isRetry) {
-        messages.value.push({
-          id: data.client_message_id,
-          client_message_id: data.client_message_id.replaceAll('-', ''),
-          sequence: current.value.last_sequence + 1,
-          role: 'user',
-          content: data.content,
-          status: 'pending',
-          local: true,
-          attachments: [...draftAttachments.value],
-        })
-        draft.value = ''
-        draftAttachments.value = []
-      } else if (tail.value) tail.value.status = 'pending'
-      const result = await api.send(
-        current.value.id,
+      const result = await (api.sendStream || api.send)(
+        run.conversation.id,
         { ...data, retry: isRetry },
         controller.signal,
+        onDelta,
       )
-      if (epoch !== view || !alive) return
-      // 以服务端消息为准，替换乐观显示；重放也不会追加重复消息。
+      if (!alive) return
       const ids = new Set([result.user_message.id, result.assistant_message.id])
-      messages.value = messages.value.filter(
+      run.messages = run.messages.filter(
         (message) =>
           message.client_message_id !== result.user_message.client_message_id &&
           !ids.has(message.id),
       )
-      messages.value.push(
+      run.messages.push(
         displayMessage(result.user_message),
         displayMessage(result.assistant_message),
       )
-      messages.value.sort((a, b) => a.sequence - b.sequence)
+      run.messages.sort((a, b) => a.sequence - b.sequence)
+      confirmed = true
       upsert(result.conversation)
-      lastSubmission = null
-      if (result.conversation.last_sequence > result.assistant_message.sequence) {
-        submitting.value = false
-        await refreshCurrent()
+      if (viewing(run)) {
+        messages.value = run.messages
+        lastSubmission = null
+        if (result.conversation.last_sequence > result.assistant_message.sequence) {
+          submitting.value = false
+          await refreshCurrent()
+        }
       }
     } catch (cause) {
-      if (epoch !== view || !alive) return
+      if (!alive) return
+      run.messages = run.messages.filter((message) => !message.streaming)
+      run.notice = cause.message || '本次请求未完成，请刷新确认。'
       if (cause.retryAfter) cooldown(cause.retryAfter)
-      notice.value = cause.message || '本次请求未完成，请刷新确认。'
-      if (current.value) {
-        // 不能因为响应丢失就再次调用模型；先读取已保存结果。
-        submitting.value = false
-        await refreshCurrent()
-      } else {
-        draft.value = data.content
+      if (viewing(run)) {
+        messages.value = run.messages
+        notice.value = run.notice
+        lastSubmission = run.submission
+        if (current.value) {
+          submitting.value = false
+          await refreshCurrent()
+          confirmed = viewing(run) && !loadError.value
+        } else {
+          messages.value = []
+          draft.value = data.content
+          draftAttachments.value = run.submission.attachments
+          lastSubmission = null
+          confirmed = true
+        }
       }
+      // An inactive failed request is reconciled with server history on return.
     } finally {
-      if (epoch === view && alive) {
+      run.active = false
+      if (confirmed || !alive) generations.delete(run.key)
+      if (viewing(run)) {
         submitting.value = false
-        sendController = null
         schedulePoll()
       }
     }
+  }
+
+  function stop() {
+    generations
+      .get(current.value?.id || createId)
+      ?.controller.abort(new DOMException('已停止本次生成，正在确认保存状态。', 'AbortError'))
+  }
+
+  function stopAll() {
+    for (const run of generations.values())
+      run.controller.abort(new DOMException('已退出页面，停止生成。', 'AbortError'))
   }
 
   function setSourceMode(value) {
@@ -461,7 +547,11 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
   }
 
   async function sendResolved(mode) {
-    if (mode === 'documents' && !current.value && !draftAttachments.value.some((item) => item.kind === 'document')) {
+    if (
+      mode === 'documents' &&
+      !current.value &&
+      !draftAttachments.value.some((item) => item.kind === 'document')
+    ) {
       attachmentError.value = '当前对话没有文档。请先上传文字文档，再选择“查资料”。'
       return
     }
@@ -534,7 +624,12 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
   function editFailed() {
     if (isLoading.value || tail.value?.status !== 'failed' || loadError.value) return
     draft.value = tail.value.content
-    sourceMode.value = tail.value.source_mode === 'documents' ? 'documents' : tail.value.source_mode === 'chat' ? 'chat' : 'auto'
+    sourceMode.value =
+      tail.value.source_mode === 'documents'
+        ? 'documents'
+        : tail.value.source_mode === 'chat'
+          ? 'chat'
+          : 'auto'
     draftAttachments.value = (tail.value.attachments || []).map((item) => ({ ...item }))
     error.value = ''
     notice.value = '原问题保留在历史中，修改后的问题会作为新消息发送。'
@@ -568,6 +663,8 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
 
   function dispose() {
     alive = false
+    stopAll()
+    generations.clear()
     leaveView()
     listController?.abort()
     capabilityController.abort()
@@ -612,6 +709,8 @@ export function useConversations(api = historyApi, filesApi = attachmentApi) {
     loadOlder,
     reset,
     send,
+    stop,
+    stopAll,
     chooseRoute,
     cancelRouteChoice,
     setSourceMode,

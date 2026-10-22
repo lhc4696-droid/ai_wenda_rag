@@ -14,7 +14,7 @@ CREDS = {"username": "account_user", "password": "abcd1234"}
 def test_rename_keeps_session_without_password_confirmation(client, app):
     user = register_user(client, CREDS).json()["user"]
     token = client.cookies.get(COOKIE_NAME)
-    invalid = client.post("/api/auth/username", json={"username": "ab"})
+    invalid = client.post("/api/auth/username", json={"username": " "})
     assert invalid.status_code == 422
     assert app.state.auth_store.find_user("account_user") is not None
     renamed = client.post("/api/auth/username", json={"username": "new_name"})

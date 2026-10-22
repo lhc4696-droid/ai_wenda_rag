@@ -36,12 +36,18 @@ class ChatResponse(BaseModel):
     sources: list[dict] = Field(default_factory=list)
 
 
-class ChatUsageResponse(BaseModel):
+class ModelUsage(BaseModel):
     requests: int
     succeeded: int
     input_tokens: int | None
     output_tokens: int | None
-    daily_limit: int
+    daily_limit: int | None
+
+
+class ChatUsageResponse(ModelUsage):
+    custom: ModelUsage
+    embedding: ModelUsage
+    legacy_requests: int = 0
     resets_at: int
 
 

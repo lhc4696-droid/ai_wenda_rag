@@ -8,7 +8,7 @@ from .model import CodingModel
 from .compatible_model import OpenAICompatibleCodingModel
 from app.model_settings.schemas import ModelSettingsError
 from .schemas import CodingError
-from .service import CodingService, database_call
+from .runtime import CodingRuntime, database_call
 from .tools import TOOL_DEFINITIONS
 
 
@@ -39,7 +39,7 @@ write_file 只允许创建不存在的新文件；replace_text修改既有文件
 """
 
 
-class LocalCodingService(CodingService):
+class LocalCodingService(CodingRuntime):
     """Reuse metered model calls and worker cancellation, not the snapshot tool engine."""
     def __init__(self, store, model_calls, settings, model_settings=None):
         super().__init__(store, model_calls, settings)

@@ -37,6 +37,8 @@ class LLMProvider(Protocol):
 
 
 class DashScopeLLM:
+    billing_source = "default"
+
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._max_output_tokens = settings.chat_max_output_tokens

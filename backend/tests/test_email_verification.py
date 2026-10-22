@@ -125,7 +125,7 @@ def test_background_failure_does_not_leak_or_activate(client, app, caplog):
 
 
 def test_missing_configuration_is_clear_without_breaking_legacy_login(app):
-    settings = replace(app.state.settings, email_code_secret="", smtp_host="", smtp_password="")
+    settings = replace(app.state.settings, email_code=replace(app.state.settings.email_code, secret=""), smtp=replace(app.state.settings.smtp, host="", password=""))
     application = create_app(settings)
     with TestClient(application) as client:
         response = client.post("/api/auth/email-code", json={"email": EMAIL, "purpose": "register"})
@@ -146,7 +146,7 @@ def test_old_schema_migration_preserves_accounts_and_sessions(tmp_path):
     assert row["id"] == 7 and row["email"] is None and row["email_verified_at"] is None
     assert verify_password(CREDS["password"], row["password_hash"])
     with store.connect() as db:
-        assert [row[0] for row in db.execute("SELECT version FROM schema_migrations ORDER BY version")] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        assert [row[0] for row in db.execute("SELECT version FROM schema_migrations ORDER BY version")] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
         assert db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
 
@@ -237,7 +237,7 @@ def test_smtp_uses_encryption_and_does_not_include_password(app, monkeypatch, mo
             messages.append(message)
             return {}
     monkeypatch.setattr(email_module.smtplib, "SMTP_SSL" if mode == "ssl" else "SMTP", SMTPConnection)
-    settings = replace(app.state.settings, smtp_host="smtp.test.invalid", smtp_username="sender", smtp_password="test-smtp-secret", smtp_from="sender@example.com", smtp_security=mode)
+    settings = replace(app.state.settings, smtp=replace(app.state.settings.smtp, host="smtp.test.invalid", username="sender", password="test-smtp-secret", from_address="sender@example.com", security=mode))
     SMTPMailer(settings).send_code(EMAIL, "003821", "register", 300)
     assert messages[0]["To"] == EMAIL
     assert "003821" in messages[0].get_content()

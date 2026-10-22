@@ -21,7 +21,7 @@ class ConversationService:
             # 写入失败时由租约恢复；不在日志中写用户问题和原始服务异常。
             logger.error("history_finalize_failed request_id=%s category=%s", identifier, type(exc).__name__)
 
-    async def send(self, user_id, conversation_id, data, identifier, provider, disconnected=None):
+    async def send(self, user_id, conversation_id, data, identifier, provider, disconnected=None, on_delta=None):
         if data.source_mode == "documents":
             if not self.settings.rag_enabled or self.rag is None:
                 raise HistoryError("资料检索尚未启用，请配置 RAG_ENABLED 后重试", "RAG_DISABLED", 503)
@@ -45,7 +45,7 @@ class ConversationService:
             if self.attachments:
                 turn["messages"] = await asyncio.to_thread(prepare_messages, self.store.auth, self.attachments.storage, user_id, turn["records"], data.source_mode == "legacy")
             sources = []
-            if data.source_mode == "documents":
+            async def prepare_documents():
                 hits = await self.rag.retrieve(user_id, conversation_id, data.content)
                 if hits:
                     evidence = "\n\n以下是从当前会话文档中检索出的片段。仅依据这些片段回答文档事实；无法从片段确认的内容请明确说明。引用时使用对应的 [编号]，不要编造页码：\n"
@@ -56,7 +56,8 @@ class ConversationService:
                     turn["messages"][-1].content += evidence
                 else:
                     turn["messages"][-1].content += "\n\n当前会话文档没有找到可用的检索片段。请说明没有资料依据，不要编造出处。"
-            answer = await self.chat.answer(turn["messages"], user_id, identifier, provider, disconnected)
+            answer = await self.chat.answer(turn["messages"], user_id, identifier, provider, disconnected, on_delta=on_delta,
+                                            prepare=prepare_documents if data.source_mode == "documents" else None)
             answer.sources = sources
             answer.context_trimmed = answer.context_trimmed or turn["trimmed"]
             # 完整回复与用户消息完成状态在同一事务提交；响应丢失可用同一编号重放。

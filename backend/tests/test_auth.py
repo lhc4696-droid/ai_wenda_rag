@@ -78,7 +78,7 @@ def test_users_have_distinct_sessions(client, app):
         assert client.get("/api/auth/me").json()["user"]["username"] == "xiaoming"
 
 
-@pytest.mark.parametrize("changes", [{"username": "ab"}, {"username": "a b"}, {"password": "p@9"}, {"password": "x" * 129}, {"password": " " * 12}])
+@pytest.mark.parametrize("changes", [{"username": ""}, {"username": "a\nb"}, {"password": "p@9"}, {"password": "x" * 129}, {"password": " " * 12}])
 def test_invalid_credentials_do_not_echo_password(client, changes):
     data = {**CREDS, **changes}
     response = client.post("/api/auth/register", json=data)

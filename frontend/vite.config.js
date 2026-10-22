@@ -7,8 +7,8 @@ export default defineConfig(({ mode }) => {
     '/api': {
       target: env.API_PROXY_TARGET || 'http://127.0.0.1:8000',
       changeOrigin: true,
-      timeout: 125_000,
-      proxyTimeout: 125_000,
+      timeout: 225_000,
+      proxyTimeout: 225_000,
     },
   }
   return {

@@ -27,8 +27,10 @@ test('账号规则统一接受 8 位密码，拒绝短密码、全空格和无�
   assert.ok(passwordError('        '))
   assert.ok(passwordError('x'.repeat(129)))
   assert.equal(usernameError(' new_name '), '')
-  assert.ok(usernameError('ab'))
-  assert.ok(usernameError('a b'))
+  assert.equal(usernameError('ab'), '')
+  assert.equal(usernameError('a b'), '')
+  assert.ok(usernameError(''))
+  assert.ok(usernameError('a\nb'))
 })
 
 test('截断说明不混入上下文，超长回答不会破坏后续追问', async () => {

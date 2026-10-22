@@ -1,11 +1,15 @@
-"""附件回归用例；仅临时库/模型替身，本轮未执行。"""
+"""附件回归用例；仅使用临时库、临时文件和离线模型替身。"""
 import asyncio
+from io import BytesIO
+import subprocess
+import threading
 from types import SimpleNamespace
 from dataclasses import replace
 from uuid import uuid4
 import zipfile
 import pytest
 from fastapi.testclient import TestClient
+from starlette.datastructures import UploadFile
 from app.attachments.parsers import parse, ParseError
 from app.attachments.context import ModelMessage
 from app.chat.service import bounded_context
@@ -13,6 +17,261 @@ from app.main import get_llm_provider
 from app.integrations.llm import LLMResult
 from app.integrations.llm import DashScopeLLM
 from tests.fakes import register_user
+
+
+class WorkerGate:
+    """Pause a real blocking operation until cancellation assertions are complete."""
+    def __init__(self):
+        self.loop = asyncio.get_running_loop()
+        self.started = asyncio.Event()
+        self.release = threading.Event()
+
+    def wait(self):
+        self.loop.call_soon_threadsafe(self.started.set)
+        if not self.release.wait(5):
+            raise TimeoutError("Test did not release the worker")
+
+
+async def cancel_twice(task):
+    for _ in range(2):
+        task.cancel()
+        # Let shield cancellation and its caller's exception handler run.
+        for _ in range(4):
+            await asyncio.sleep(0)
+
+
+def attachment_rows(app):
+    with app.state.auth_store.connect() as db:
+        return [dict(row) for row in db.execute("SELECT * FROM attachments")]
+
+
+def assert_cancelled_attachment_is_cleanable(app):
+    rows = attachment_rows(app)
+    assert len(rows) == 1
+    assert rows[0]["status"] == "deleting"
+    identifier = rows[0]["id"]
+    app.state.attachments.cleanup()
+    assert attachment_rows(app) == []
+    assert not app.state.attachments.storage.path(identifier).exists()
+    assert not app.state.attachments.storage.path(identifier, True).exists()
+
+
+@pytest.mark.parametrize("outcome", ["success", "timeout", "error"])
+def test_repeated_parser_cancellation_holds_slot_until_worker_exits(app, monkeypatch, outcome):
+    service = app.state.attachments
+
+    async def scenario():
+        gate = WorkerGate()
+        service.slots = asyncio.Semaphore(1)
+
+        def run(*args, **kwargs):
+            gate.wait()
+            if outcome == "timeout":
+                raise subprocess.TimeoutExpired("offline-parser", 30)
+            if outcome == "error":
+                raise OSError("offline worker failure")
+            return SimpleNamespace(returncode=0, stdout=b'{"text":"offline"}')
+
+        monkeypatch.setattr("app.attachments.service.subprocess.run", run)
+
+        async def parse_with_slot():
+            async with service.slots:
+                return await service.process("a" * 32, ".txt")
+
+        task = asyncio.create_task(parse_with_slot())
+        try:
+            await asyncio.wait_for(gate.started.wait(), 3)
+            await cancel_twice(task)
+            assert not task.done(), "Parser cancellation returned while its worker was running"
+            assert service.slots.locked()
+        finally:
+            gate.release.set()
+            results = await asyncio.gather(task, return_exceptions=True)
+        assert isinstance(results[0], asyncio.CancelledError)
+        assert not service.slots.locked()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("stage", ["reserve", "write", "parse", "finish", "abandon"])
+def test_upload_cancellation_waits_for_storage_and_cleans_records(logged_in, app, monkeypatch, stage):
+    service = app.state.attachments
+    owner = logged_in.get("/api/auth/me").json()["user"]["id"]
+    body = b"offline attachment body"
+    target_files = []
+
+    async def scenario():
+        gate = WorkerGate()
+        parsing = asyncio.Event()
+        service.slots = asyncio.Semaphore(1)
+
+        async def process(identifier, extension):
+            if stage == "abandon":
+                parsing.set()
+                await asyncio.Event().wait()
+            return {"text": body.decode(), "media_type": "text/plain"}
+
+        if stage == "parse":
+            def run(command, **kwargs):
+                gate.wait()
+                # A cancelled parser can still produce a preview before it exits.
+                from pathlib import Path
+                Path(command[-2]).with_suffix(".jpg").write_bytes(b"offline preview")
+                return SimpleNamespace(returncode=0, stdout=b'{"text":"offline"}')
+
+            monkeypatch.setattr("app.attachments.service.subprocess.run", run)
+        else:
+            monkeypatch.setattr(service, "process", process)
+        if stage == "write":
+            create = service.storage.create
+
+            class DeferredFile:
+                def __init__(self, target):
+                    self.target = target
+                    target_files.append(target)
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    self.target.close()
+
+                def write(self, chunk):
+                    gate.wait()
+                    return self.target.write(chunk)
+
+            monkeypatch.setattr(service.storage, "create", lambda identifier: DeferredFile(create(identifier)))
+        elif stage != "parse":
+            original = getattr(service.store, stage)
+
+            def delayed(*args):
+                gate.wait()
+                return original(*args)
+
+            monkeypatch.setattr(service.store, stage, delayed)
+
+        incoming = UploadFile(BytesIO(body), filename="notes.txt", size=len(body))
+        task = asyncio.create_task(service.upload(owner, incoming))
+        try:
+            if stage == "abandon":
+                await asyncio.wait_for(parsing.wait(), 3)
+                task.cancel()
+            await asyncio.wait_for(gate.started.wait(), 3)
+            await cancel_twice(task)
+            assert not task.done(), f"Cancelled upload left the {stage} worker behind"
+            assert service.slots.locked()
+            if stage == "write":
+                assert not target_files[0].closed, "File closed before its write worker finished"
+        finally:
+            gate.release.set()
+            results = await asyncio.gather(task, return_exceptions=True)
+            await incoming.close()
+        assert isinstance(results[0], asyncio.CancelledError)
+        assert not service.slots.locked()
+        if stage == "reserve":
+            assert not service.storage.path(attachment_rows(app)[0]["id"]).exists()
+        else:
+            assert service.storage.path(attachment_rows(app)[0]["id"]).read_bytes() == body
+        if stage == "write":
+            assert target_files[0].closed
+        if stage == "parse":
+            assert service.storage.path(attachment_rows(app)[0]["id"], True).read_bytes() == b"offline preview"
+
+    asyncio.run(scenario())
+    assert_cancelled_attachment_is_cleanable(app)
+
+
+def test_cancelled_finish_preserves_an_already_bound_attachment(logged_in, app, monkeypatch):
+    service = app.state.attachments
+    owner = logged_in.get("/api/auth/me").json()["user"]["id"]
+    cid = conversation(logged_in)
+
+    async def scenario():
+        gate = WorkerGate()
+        finish = service.store.finish
+
+        def delayed_finish(*args):
+            result = finish(*args)
+            gate.wait()
+            return result
+
+        async def process(*args):
+            return {"text": "offline", "media_type": "text/plain"}
+
+        monkeypatch.setattr(service.store, "finish", delayed_finish)
+        monkeypatch.setattr(service, "process", process)
+        incoming = UploadFile(BytesIO(b"offline"), filename="notes.txt", size=7)
+        task = asyncio.create_task(service.upload(owner, incoming))
+        try:
+            await asyncio.wait_for(gate.started.wait(), 3)
+            with app.state.auth_store.connect() as db:
+                db.execute("UPDATE attachments SET conversation_id = ?, expires_at = 0", (cid,))
+            await cancel_twice(task)
+        finally:
+            gate.release.set()
+            results = await asyncio.gather(task, return_exceptions=True)
+            await incoming.close()
+        assert isinstance(results[0], asyncio.CancelledError)
+
+    asyncio.run(scenario())
+    rows = attachment_rows(app)
+    assert len(rows) == 1 and rows[0]["status"] == "ready" and rows[0]["conversation_id"] == cid
+    service.cleanup()
+    assert service.store.get(owner, rows[0]["id"])["status"] == "ready"
+    assert service.storage.path(rows[0]["id"]).read_bytes() == b"offline"
+
+
+def test_cleanup_failure_preserves_cancellation_and_expiry_fallback(logged_in, app, monkeypatch):
+    service = app.state.attachments
+    owner = logged_in.get("/api/auth/me").json()["user"]["id"]
+
+    async def scenario():
+        parsing = asyncio.Event()
+
+        async def process(identifier, extension):
+            parsing.set()
+            await asyncio.Event().wait()
+
+        def unavailable(*args):
+            raise OSError("offline cleanup failure")
+
+        monkeypatch.setattr(service, "process", process)
+        monkeypatch.setattr(service.store, "abandon", unavailable)
+        incoming = UploadFile(BytesIO(b"offline"), filename="notes.txt", size=7)
+        task = asyncio.create_task(service.upload(owner, incoming))
+        try:
+            await asyncio.wait_for(parsing.wait(), 3)
+            task.cancel()
+            results = await asyncio.gather(task, return_exceptions=True)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await incoming.close()
+        assert isinstance(results[0], asyncio.CancelledError)
+
+    asyncio.run(scenario())
+    rows = attachment_rows(app)
+    assert len(rows) == 1 and rows[0]["status"] == "uploading"
+    with app.state.auth_store.connect() as db:
+        db.execute("UPDATE attachments SET expires_at = 0")
+    service.cleanup()
+    assert attachment_rows(app) == []
+    assert not service.storage.path(rows[0]["id"]).exists()
+
+
+def test_parser_timeout_is_reported_as_failed_and_can_be_deleted(logged_in, app, monkeypatch):
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired("offline-parser", 30)
+
+    monkeypatch.setattr("app.attachments.service.subprocess.run", timeout)
+    response = upload(logged_in)
+    assert response.status_code == 201
+    item = response.json()
+    assert item["status"] == "failed" and "30" in item["error_message"]
+    assert logged_in.get(f"/api/attachments/{item['id']}/content").status_code == 409
+    assert logged_in.delete(f"/api/attachments/{item['id']}").status_code == 204
+    assert attachment_rows(app) == []
+    assert not app.state.attachments.storage.path(item["id"]).exists()
 
 
 def upload(client, filename="notes.txt", body=b"attachment marker 123", media="text/plain"):
@@ -118,7 +377,7 @@ def test_parser_image_docx_pdf_limits(tmp_path):
 
 
 def test_attachment_content_counts_toward_context_budget(app):
-    settings = replace(app.state.settings, chat_context_chars=20000)
+    settings = replace(app.state.settings, chat=replace(app.state.settings.chat, context_chars=20000))
     with pytest.raises(Exception, match="附件超过"):
         bounded_context([ModelMessage("user", "x" * 19999, [])], settings)
     selected, trimmed = bounded_context([ModelMessage("user", "旧图片", ["a", "b"]), ModelMessage("assistant", "答"), ModelMessage("user", "新图片", ["c", "d"])], settings)
@@ -127,7 +386,7 @@ def test_attachment_content_counts_toward_context_budget(app):
 
 def test_attachment_quota_includes_preview_reservation(app):
     with pytest.raises(ValueError, match="预览预留空间"):
-        replace(app.state.settings, attachment_user_quota=app.state.settings.attachment_max_bytes)
+        replace(app.state.settings, attachment=replace(app.state.settings.attachment, user_quota=app.state.settings.attachment_max_bytes))
 
 
 def test_vision_adapter_sends_private_image_bytes_and_reports_model(tmp_path, app, monkeypatch):

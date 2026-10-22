@@ -6,8 +6,8 @@ import time
 
 
 SQL_DIR = Path(__file__).resolve().parents[1] / "sql"
-MIGRATIONS = ((2, "002_model_calls.sql"), (3, "003_conversation_history.sql"), (4, "004_attachments.sql"), (5, "005_rag_modes.sql"), (6, "006_coding_agent.sql"), (7, "007_local_coding.sql"), (8, "008_local_coding_conversations.sql"), (9, "009_user_model_settings.sql"), (10, "010_local_coding_projects.sql"), (11, "011_local_project_names.sql"), (12, "012_model_max_output_tokens.sql"))
-CURRENT_VERSION = 12
+MIGRATIONS = ((2, "002_model_calls.sql"), (3, "003_conversation_history.sql"), (4, "004_attachments.sql"), (5, "005_rag_modes.sql"), (6, "006_coding_agent.sql"), (7, "007_local_coding.sql"), (8, "008_local_coding_conversations.sql"), (9, "009_user_model_settings.sql"), (10, "010_local_coding_projects.sql"), (11, "011_local_project_names.sql"), (12, "012_model_max_output_tokens.sql"), (13, "013_model_call_sources.sql"))
+CURRENT_VERSION = 13
 
 
 def execute_statements(connection: sqlite3.Connection, source: str):

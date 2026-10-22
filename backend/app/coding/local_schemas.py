@@ -6,8 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .schemas import CreateTask, TaskStep
-from .workspace import validate_path
+from .schemas import CodingError, CreateTask, TaskStep
+from .workspace import validate_local_path
 
 
 class LocalCreate(BaseModel):
@@ -31,9 +31,9 @@ class LocalCreate(BaseModel):
             raise ValueError("文件路径重复")
         for path in values:
             try:
-                validate_path(path)
-            except Exception:
-                raise ValueError("文件路径无效") from None
+                validate_local_path(path)
+            except CodingError as error:
+                raise ValueError(str(error)) from None
         return values
 
 
